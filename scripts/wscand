@@ -1,0 +1,108 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          wscand
+# Required-Start:    $remote_fs $syslog $network
+# Should-Start:      gpsd
+# Required-Stop:     $remote_fs $syslog $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: WiPi scanner
+# Description:       The wscand service daemon is able to monitor a Wi-Fi
+#                    interface connected to a host computer, making
+#                    all Wi-Fi data available on LCD display.
+### END INIT INFO
+
+# Author: Martin Dubuc <mdubuc@freeshell.org>
+#
+# Please remove the "Author" lines above and replace them
+# with your own name if you copy and modify this script.
+
+# Do NOT "set -e"
+
+# PATH should only include /usr/* if it runs after the mountnfs.sh script
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+DESC="Wi-Pi scanner daemon"
+NAME=wscand
+DAEMON=/usr/sbin/$NAME
+DAEMON_OPT="-i wlan0 -e -v 4 -o /var/local/wscand.out"
+PIDFILE=/var/run/$NAME.pid
+SCRIPTNAME=/etc/init.d/$NAME
+
+# Exit if the package is not installed
+[ -x "$DAEMON" ] || exit 0
+
+# Read configuration variable file if it is present
+[ -r /etc/default/$NAME ] && . /etc/default/$NAME
+
+# Load the VERBOSE setting and other rcS variables
+. /lib/init/vars.sh
+
+# Define LSB log_* functions.
+# Depend on lsb-base (>= 3.0-6) to ensure that this file is present.
+. /lib/lsb/init-functions
+
+#
+# Function that starts the daemon/service
+#
+do_start()
+{
+	log_daemon_msg "Starting system $NAME daemon"
+	/sbin/ifconfig wlan0 down
+	/sbin/iwconfig wlan0 mode monitor
+	/sbin/ifconfig wlan0 up
+
+	rm -f /var/log/wscand.log
+        # Return
+        #   0 if daemon has been started
+        #   1 if daemon was already running
+        #   2 if daemon could not be started
+
+        start-stop-daemon --start --name $NAME --pidfile $PIDFILE --quiet --exec $DAEMON --test > /dev/null || return 1
+        start-stop-daemon --start --background --name $NAME --pidfile $PIDFILE --quiet --exec $DAEMON -- $DAEMON_OPT || return 2
+	log_end_msg $?
+}
+
+#
+# Function that stops the daemon/service
+#
+do_stop()
+{
+	log_daemon_msg "Stopping system $NAME daemon"
+	start-stop-daemon --stop --name $NAME --retry 5 --quiet
+	log_end_msg $?
+}
+
+#
+# Function that sends a SIGHUP to the daemon/service
+#
+do_reload() {
+	#
+	# If the daemon can reload its configuration without
+	# restarting (for example, when it is sent a SIGHUP),
+	# then implement that here.
+	#
+	start-stop-daemon --stop --signal 1 --quiet --name $NAME
+	return 0
+}
+
+case "$1" in
+  start)
+	do_start
+	;;
+  stop)
+	do_stop
+	;;
+  status)
+	status_of_proc "$NAME" "$DAEMON" "system-wide $NAME" && exit 0 || exit $?
+	;;
+  restart|reload|force-reload)
+	do_stop
+	do_start
+	;;
+  *)
+	echo "Usage: $SCRIPTNAME {start|stop|status|restart|force-reload}" >&2
+	exit 3
+	;;
+esac
+
+exit 0

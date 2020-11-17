@@ -27,6 +27,7 @@ terminate(Boolean useExit3)
     else
         _exit(EXIT_FAILURE);
 }
+
 /* Diagnose 'errno' error by:
 
       * outputting a string containing the error name (if available
@@ -41,7 +42,7 @@ outputError(Boolean useErr, int err, Boolean flushStdout,
         const char *format, va_list ap)
 {
 #define BUF_SIZE 500
-    char buf[BUF_SIZE], userMsg[BUF_SIZE], errText[BUF_SIZE];
+    char buf[BUF_SIZE * 2 + 32], userMsg[BUF_SIZE], errText[BUF_SIZE];
 
     vsnprintf(userMsg, BUF_SIZE, format, ap);
 
@@ -52,7 +53,7 @@ outputError(Boolean useErr, int err, Boolean flushStdout,
     else
         snprintf(errText, BUF_SIZE, ":");
 
-    snprintf(buf, BUF_SIZE, "ERROR%s %s\n", errText, userMsg);
+    snprintf(buf, sizeof(buf), "ERROR%s %s\n", errText, userMsg);
 
     if (flushStdout)
         fflush(stdout);       /* Flush any pending stdout */
@@ -76,9 +77,9 @@ errMsg(const char *format, ...)
 
     errno = savedErrno;
 }
+
 /* Display error message including 'errno' diagnostic, and
    terminate the process */
-
 void
 errExit(const char *format, ...)
 {
@@ -90,6 +91,7 @@ errExit(const char *format, ...)
 
     terminate(TRUE);
 }
+
 /* Display error message including 'errno' diagnostic, and
    terminate the process by calling _exit().
 
@@ -104,7 +106,6 @@ errExit(const char *format, ...)
    because of an error: the child must terminate without flushing
    stdio buffers that were partially filled by the caller and without
    invoking exit handlers that were established by the caller. */
-
 void
 err_exit(const char *format, ...)
 {
@@ -143,8 +144,8 @@ fatal(const char *format, ...)
 
     terminate(TRUE);
 }
-/* Print a command usage error message and terminate the process */
 
+/* Print a command usage error message and terminate the process */
 void
 usageErr(const char *format, ...)
 {
@@ -160,9 +161,9 @@ usageErr(const char *format, ...)
     fflush(stderr);           /* In case stderr is not line-buffered */
     exit(EXIT_FAILURE);
 }
+
 /* Diagnose an error in command-line arguments and
    terminate the process */
-
 void
 cmdLineErr(const char *format, ...)
 {

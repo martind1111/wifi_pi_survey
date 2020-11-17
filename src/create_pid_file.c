@@ -62,7 +62,8 @@ createPidFile(const char *progName, const char *pidFile, int flags)
         errExit("Could not truncate PID file '%s'", pidFile);
 
     snprintf(buf, BUF_SIZE, "%ld\n", (long) getpid());
-    if (write(fd, buf, strlen(buf)) != strlen(buf))
+    ssize_t ret = write(fd, buf, strlen(buf));
+    if (ret < 0 || (size_t)ret != strlen(buf))
         fatal("Writing to PID file '%s'", pidFile);
 
     return fd;

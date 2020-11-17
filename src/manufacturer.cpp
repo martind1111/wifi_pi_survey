@@ -19,6 +19,8 @@ static map<string, string> manufacturers;
 
 static void loadManuf();
 
+const char* MANUFACTURER_PATH = "/usr/share/wireshark/manuf";
+
 static void
 loadManuf() {
   FILE *f;
@@ -34,10 +36,10 @@ loadManuf() {
 
   loaded = true;
 
-  f = fopen("/etc/manuf", "r");
+  f = fopen(MANUFACTURER_PATH, "r");
 
   if (f == NULL) {
-    fprintf(stderr, "File /etc/manuf not present\n");
+    fprintf(stderr, "File %s not present\n", MANUFACTURER_PATH);
 
     return;
   }

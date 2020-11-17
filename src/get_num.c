@@ -8,10 +8,10 @@
 #include <limits.h>
 #include <errno.h>
 #include "get_num.h"
+
 /* Print a diagnostic message that contains a function name ('fname'),
    the value of a command-line argument ('arg'), the name of that
    command-line argument ('name'), and a diagnostic error message ('msg'). */
-
 static void
 gnFail(const char *fname, const char *msg, const char *arg, const char *name)
 {
@@ -24,6 +24,7 @@ gnFail(const char *fname, const char *msg, const char *arg, const char *name)
 
     exit(EXIT_FAILURE);
 }
+
 /* Convert a numeric command-line argument ('arg') into a long integer,
    returned as the function result. 'flags' is a bit mask of flags controlling
    how the conversion is done and what diagnostic checks are performed on the
@@ -32,7 +33,6 @@ gnFail(const char *fname, const char *msg, const char *arg, const char *name)
    'fname' is the name of our caller, and 'name' is the name associated with
    the command-line argument 'arg'. 'fname' and 'name' are used to print a
    diagnostic message in case an error is detected when processing 'arg'. */
-
 static long
 getNum(const char *fname, const char *arg, int flags, const char *name)
 {
@@ -62,17 +62,17 @@ getNum(const char *fname, const char *arg, int flags, const char *name)
 
     return res;
 }
+
 /* Convert a numeric command-line argument string to a long integer. See the
    comments for getNum() for a description of the arguments to this function. */
-
 long
 getLong(const char *arg, int flags, const char *name)
 {
     return getNum("getLong", arg, flags, name);
 }
+
 /* Convert a numeric command-line argument string to an integer. See the
    comments for getNum() for a description of the arguments to this function. */
-
 int
 getInt(const char *arg, int flags, const char *name)
 {

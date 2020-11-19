@@ -41,4 +41,5 @@ void setCurrentLocation(Location_t *location);
 
 const char *getSecurityString(uint32_t security);
 
+
 #endif // _WSCAN_H

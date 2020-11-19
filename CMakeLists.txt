@@ -26,11 +26,11 @@ add_compile_options(
 #enable_sanitizers(project_settings)
 
 # Enable doxygen
-#include(cmake/Doxygen.cmake)
-#enable_doxygen()
+include(cmake/Doxygen.cmake)
+enable_doxygen()
 
 # Allow for static analysis options
-#include(cmake/StaticAnalyzers.cmake)
+include(cmake/StaticAnalyzers.cmake)
 
 # Testing
 option(ENABLE_TESTING "Enable Test Builds" OFF)

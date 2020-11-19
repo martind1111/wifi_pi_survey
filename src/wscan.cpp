@@ -41,6 +41,10 @@ extern "C" {
 #include "database.h"
 #include "manufacturer.h"
 
+#include "PacketSummary.h"
+#include "PacketDecoder.h"
+#include "PacketHandler.h"
+
 #define SUBTYPE_BITFIELD(fc) (fc >> 12)
 
 #define OVECCOUNT 30
@@ -72,7 +76,6 @@ extern "C" {
 #define DEFAULT_ACTIVITY_THRESHOLD 30
 
 static char errbuf[PCAP_ERRBUF_SIZE];
-static char payload[MAX_PACKET_SIZE];
 
 using namespace std;
 
@@ -185,29 +188,10 @@ static Location_t lastDistanceLocation;
 static list<Location_t> distanceLocations;
 
 static char *copy_argv(char **argv);
-void radiotap_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
-                      const u_char *packet, PacketSummary_t *packetInfo);
-void ieee802_11_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
-                        const u_char *packet, PacketSummary_t *packetInfo);
-void parseAddresses(const struct pcap_pkthdr *pkthdr, const u_char *packet,
-                    PacketSummary_t *packetInfo);
-void updateSecurity(PacketSummary_t *packetInfo);
-int decode_assocReq(u_char *packet, u_int32_t packetLen,
-                    PacketSummary_t *packetInfo);
-int decode_beacon(u_char *packet, u_int32_t packetLen,
-                  PacketSummary_t *packetInfo);
-int decode_probeResp(u_char *packet, u_int32_t packetLen,
-                     PacketSummary_t *packetInfo);
-void copy_ether_addr(struct ether_addr *destAddr, struct ether_addr *srcAddr);
-const char *get_ieee80211_type(struct frame_control *control);
-const char *get_ieee80211_subtype(struct frame_control *control);
-u_int16_t ethernet_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
-                           const u_char *packet);
-u_char *ip_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
-                   const u_char *packet);
-void pcap_callback(u_char *user, const struct pcap_pkthdr* pkthdr,
-                   const u_char* packet);
-void dump_payload(char *payload, size_t payload_length);
+void logRadiotap(uint8_t* user, PacketSummary_t* packetInfo);
+void log80211(const Packet* packet, uint8_t* user, PacketSummary_t* packetInfo);
+void pcap_callback(uint8_t *user, const struct pcap_pkthdr* pkthdr,
+                   const uint8_t* packet);
 void errorlog(int opmode, const char *module, const char *message);
 void initLocation();
 void parseArguments(int argc, char *argv[], WscanContext_t *context);
@@ -280,98 +264,9 @@ copy_argv(char **argv) {
   return buf;
 }
 
-/* Radiotap header Handler */
 void
-radiotap_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
-                 const u_char *packet, PacketSummary_t *packetInfo) {
-  WscanContext_t *context = (WscanContext_t *) user;
-  u_int caplen = pkthdr->caplen; /* Length of portion present from BPF  */
-  u_int length = pkthdr->len;    /* Length of this packet off the wire  */
-
-  struct ieee80211_radiotap_header *radiotap_hdr =
-    (struct ieee80211_radiotap_header *) packet;
-  u_int16_t radiotap_len = radiotap_hdr->it_len;
-
-  if (caplen - radiotap_len < RT_VERSION_LEN + RT_LENGTH_LEN) {
-    char errStr[256];
-
-    sprintf(errStr, "Packet length is less than %d bytes: "
-            "Invalid 802.11 radiotap header", RT_VERSION_LEN + RT_LENGTH_LEN);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
-
-    return;
-  }
-
-  int antenna = 0, pwr = 0;
-  packetInfo->channel = 0;
-  packetInfo->rate = 0;
-  packetInfo->txPower = 0;
-  packetInfo->antenna = 0;
-  packetInfo->dbSignal = 0;
-  packetInfo->dbNoise = 0;
-  packetInfo->dbSnr = 0;
-  packetInfo->dbmSignal = 0;
-  packetInfo->dbmNoise = 0;
-  packetInfo->dbmSnr = 0;
-  struct ieee80211_radiotap_iterator iterator;
-  int ret = ieee80211_radiotap_iterator_init(&iterator, radiotap_hdr,
-                                             radiotap_len);
-  while (!ret) {
-    ret = ieee80211_radiotap_iterator_next(&iterator);
-
-    if (ret)
-      continue;
-
-    /* See if this argument is something we can use */
-
-    switch (iterator.this_arg_index) {
-    /*
-     * You must take care when dereferencing iterator.this_arg
-     * for multibyte types. The pointer is not aligned. Use
-     * get_unaligned((type *)iterator.this_arg) to dereference
-     * iterator.this_arg for type "type" safely on all architectures.
-     */
-    case IEEE80211_RADIOTAP_RATE:
-      /* radiotap "rate" u8 is in
-       * 500 kbps units, eg, 0x02=1Mbps
-       */
-      packetInfo->rate = (*iterator.this_arg) * 5; // In units of 100 kHz
-      break;
-
-    case IEEE80211_RADIOTAP_CHANNEL:
-      packetInfo->channel = *((uint16_t *) iterator.this_arg);
-      break;
-
-    case IEEE80211_RADIOTAP_ANTENNA:
-      /* radiotap uses 0 for 1st ant */
-      packetInfo->antenna = *iterator.this_arg;
-      break;
-
-    case IEEE80211_RADIOTAP_DBM_TX_POWER:
-      packetInfo->txPower = *iterator.this_arg;
-      break;
-
-    case IEEE80211_RADIOTAP_DBM_ANTNOISE:
-      packetInfo->dbmNoise = *iterator.this_arg;
-      break;
-
-    case IEEE80211_RADIOTAP_DBM_ANTSIGNAL:
-      packetInfo->dbmSignal = *iterator.this_arg;
-      break;
-
-    case IEEE80211_RADIOTAP_DB_ANTNOISE:
-      packetInfo->dbNoise = *iterator.this_arg;
-      break;
-
-    case IEEE80211_RADIOTAP_DB_ANTSIGNAL:
-      packetInfo->dbSignal = *iterator.this_arg;
-      break;
-
-    default:
-      break;
-    }
-  }  /* while more rt headers */
+logRadiotap(uint8_t* user, PacketSummary_t* packetInfo) {
+  WscanContext_t* context = (WscanContext_t*) user;
 
   fprintf(context->out, "(radiotap) ");
 
@@ -394,58 +289,36 @@ radiotap_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
     fprintf(context->out, "noise (dB) %d ", packetInfo->dbNoise);
 }
 
-/* Radiotap header Handler */
 void
-ieee802_11_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
-                   const u_char *packet, PacketSummary_t *packetInfo) {
-  WscanContext_t *context = (WscanContext_t *) user;
-  u_int caplen = pkthdr->caplen; /* Length of portion present from BPF  */
-  u_int length = pkthdr->len;    /* Length of this packet off the wire  */
+log80211(const Packet* packet, uint8_t* user, PacketSummary_t* packetInfo) {
+  WscanContext_t* context = (WscanContext_t*) user;
+  const uint8_t* packet_data = packet->GetData();
+  const struct ieee80211_radiotap_header* radiotap_hdr =
+    (const struct ieee80211_radiotap_header*) packet_data;
+  uint16_t radiotap_len = radiotap_hdr->it_len;
 
-  packetInfo->timestamp.tv_sec = pkthdr->ts.tv_sec;
-  packetInfo->timestamp.tv_usec = pkthdr->ts.tv_usec;
-
-  struct ieee80211_radiotap_header *radiotap_hdr =
-    (struct ieee80211_radiotap_header *) packet;
-  u_int16_t radiotap_len = radiotap_hdr->it_len;
-
-  if (caplen - radiotap_len < FC_LEN) {
-    char errStr[256];
-
-    sprintf(errStr, "Packet length is less than 2 bytes: "
-            "Invalid 802.11 MAC header");
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
-
+  if (packet->GetCaptureLength() - radiotap_len < FC_LEN) {
     return;
   }
 
-  struct mac_header *p = (struct mac_header *) (packet + radiotap_len);
-  struct frame_control *control = (struct frame_control *) p->fc;
+  const struct mac_header* p =
+    (const struct mac_header*) (packet_data + radiotap_len);
+  const struct frame_control* control = (struct frame_control*) p->fc;
 
-  fprintf(context->out, "(ieee802.11) "); 
-  fprintf(context->out, "%s ", get_ieee80211_type(control));
-  fprintf(context->out, "%s ", get_ieee80211_subtype(control));
+  fprintf(context->out, "(ieee802.11) ");
+  fprintf(context->out, "%s ", PacketDecoder::get_ieee80211_type(control));
+  fprintf(context->out, "%s ", PacketDecoder::get_ieee80211_subtype(control));
 
 #if 0
-  fprintf(context->out, "SC [ %d, %d ] ", *((u_int16_t *) p->sc) & 0xf,
-          *((u_int16_t *) p->sc) >> 4);
+  fprintf(context->out, "SC [ %d, %d ] ", *((uint16_t *) p->sc) & 0xf,
+          *((uint16_t *) p->sc) >> 4);
 #endif
-
-  packetInfo->security = 0;
-
-  packetInfo->fromDs = control->from_ds;
-  packetInfo->toDs = control->to_ds;
 
   if (packetInfo->fromDs)
     fprintf(context->out, "From DS ");
 
   if (packetInfo->toDs)
     fprintf(context->out, "To DS ");
-
-  parseAddresses(pkthdr, packet, packetInfo);
-
-  updateSecurity(packetInfo);
 
   if (context->eflag) {
     fprintf(context->out, "eth: ");
@@ -475,21 +348,6 @@ ieee802_11_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
     }
   }
 
-  packetInfo->ssid[0] = 0;
-
-  if (control->type == MGMT &&
-      control->subtype == SUBTYPE_BITFIELD(ASSOCREQ_TYPE)) {
-    decode_assocReq((u_char *) p, caplen - radiotap_len, packetInfo);
-  }
-  else if (control->type == MGMT &&
-           control->subtype == SUBTYPE_BITFIELD(BEACON_TYPE)) {
-    decode_beacon((u_char *) p, caplen - radiotap_len, packetInfo);
-  }
-  else if (control->type == MGMT &&
-           control->subtype == SUBTYPE_BITFIELD(PROBERESP_TYPE)) {
-    decode_probeResp((u_char *) p, caplen - radiotap_len, packetInfo);
-  }
-
   if (packetInfo->ssid[0] != '\0') {
     fprintf(context->out, "SSID %s ", packetInfo->ssid);
   }
@@ -497,685 +355,12 @@ ieee802_11_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
   fprintf(context->out, "\n");
 }
 
-void
-parseAddresses(const struct pcap_pkthdr *pkthdr, const u_char *packet,
-               PacketSummary_t *packetInfo) {
-  u_int caplen = pkthdr->caplen; /* Length of portion present from BPF  */
-  u_int length = pkthdr->len;    /* Length of this packet off the wire  */
-  struct ieee80211_radiotap_header *radiotap_hdr =
-    (struct ieee80211_radiotap_header *) packet;
-  u_int16_t radiotap_len = radiotap_hdr->it_len;
-
-  struct mac_header *p = (struct mac_header *) (packet + radiotap_len);
-  struct frame_control *control = (struct frame_control *) p->fc;
-
-  // Extract MAC address
-  packetInfo->bssidPresent = false;
-  memset(&packetInfo->bssid, 0, ETH_ALEN);
-  packetInfo->srcAddrPresent = false;
-  memset(&packetInfo->srcAddr, 0, ETH_ALEN);
-  packetInfo->destAddrPresent = false;
-  memset(&packetInfo->destAddr, 0, ETH_ALEN);
-  packetInfo->raPresent = false;
-  memset(&packetInfo->ra, 0, ETH_ALEN);
-  packetInfo->taPresent = false;
-  memset(&packetInfo->ta, 0, ETH_ALEN);
-
-  if (control->type == 0x01 &&
-      control->subtype == SUBTYPE_BITFIELD(BLOCKACK_TYPE)) {
-    if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->taPresent = true;
-      copy_ether_addr(&packetInfo->ta, &p->addr2);
-    }
-  }
-  else if (control->type == 0x01 &&
-      control->subtype == SUBTYPE_BITFIELD(PS_POLL_TYPE)) {
-    if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->bssidPresent = true;
-      copy_ether_addr(&packetInfo->bssid, &p->addr1);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr2);
-    }
-  }
-  else if (control->type == 0x01 &&
-           control->subtype == SUBTYPE_BITFIELD(RTS_TYPE)) {
-    if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->taPresent = true;
-      copy_ether_addr(&packetInfo->ta, &p->addr2);
-    }
-  }
-  else if (control->type == 0x01 &&
-           control->subtype == SUBTYPE_BITFIELD(CTS_TYPE)) {
-    if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
-    }
-  }
-  else if (control->type == 0x01 &&
-           control->subtype == SUBTYPE_BITFIELD(ACK_TYPE)) {
-    if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
-    }
-  }
-  else if (control->to_ds == 0 && control->from_ds == 0) {
-    if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->destAddrPresent = true;
-      copy_ether_addr(&packetInfo->destAddr, &p->addr1);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->srcAddrPresent = true;
-      copy_ether_addr(&packetInfo->srcAddr, &p->addr2);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
-      packetInfo->bssidPresent = true;
-      copy_ether_addr(&packetInfo->bssid, &p->addr3);
-    }
-  }
-  else if (control->to_ds == 0 && control->from_ds == 1) {
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->destAddrPresent = true;
-      copy_ether_addr(&packetInfo->destAddr, &p->addr1);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->bssidPresent = true;
-      copy_ether_addr(&packetInfo->bssid, &p->addr2);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
-      packetInfo->srcAddrPresent = true;
-      copy_ether_addr(&packetInfo->srcAddr, &p->addr3);
-    }
-  }
-  else if (control->to_ds == 1 && control->from_ds == 0) {
-    if (caplen - radiotap_len >= 
-        FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->bssidPresent = true;
-      copy_ether_addr(&packetInfo->bssid, &p->addr1);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->srcAddrPresent = true;
-      copy_ether_addr(&packetInfo->srcAddr, &p->addr2);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
-      packetInfo->destAddrPresent = true;
-      copy_ether_addr(&packetInfo->destAddr, &p->addr3);
-    }
-  }
-  else if (control->to_ds == 1 && control->from_ds == 1) {
-    if (caplen - radiotap_len >= 
-        FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
-    }
-
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->taPresent = true;
-      copy_ether_addr(&packetInfo->ta, &p->addr2);
-    }
-    if (caplen - radiotap_len >=
-        FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
-      packetInfo->destAddrPresent = true;
-      copy_ether_addr(&packetInfo->destAddr, &p->addr3);
-    }
-  }
-}
-
-void
-updateSecurity(PacketSummary_t *packetInfo) {
-  packetInfo->security = 0;
-
-  if (!packetInfo->bssidPresent) {
-    return;
-  }
-
-  NetworkInfo_t networkInfo;
-  string bssid = string(ether_ntoa(&packetInfo->bssid));
-
-  if (getNetwork(bssid, networkInfo)) {
-    packetInfo->security = networkInfo.security;
-  }
-}
-
-int
-decode_assocReq(u_char *packet, u_int32_t packetLen,
-                PacketSummary_t *packetInfo) {
-  struct mgmt_hdr *mgmthdr;
-  struct mgmt_ie_hdr *ie;
-  u_char *body;
-  int i;
-  char tmp;
-
-  mgmthdr = (struct mgmt_hdr *) packet;
-  body = (u_char *) packet + MGMT_HDR_LEN;
-
-  if ((body + FIELD_CAP_LEN + FIELD_LI_LEN) > (packet + packetLen)) {
-    return -1;
-  }
-
-  u_char capab = *body;
-
-  if (packetInfo->security & STD_WEP) {
-    if (capab == 0x00) {
-      packetInfo->security |= AUTH_OPN;
-    }
-    if (capab == 0x01) {
-      packetInfo->security |= AUTH_PSK;
-    }
-  }
-
-  body += FIELD_CAP_LEN;
-
-  body += FIELD_LI_LEN;
-
-  /* Information elements */
-  while (body < (packet + packetLen)) {
-    ie = (struct mgmt_ie_hdr *)body;
-    body += 2;
-    if ((body + ie->len) > (packet + packetLen)) {
-      return -1;
-    }
-
-    switch(ie->id) {
-    case IE_SSID_ID:
-      tmp = body[ie->len];
-      body[ie->len] = '\0';
-      strncpy(packetInfo->ssid, (const char *) body, MAX_SSID_LEN);
-      if (ie->len >= MAX_SSID_LEN) {
-        packetInfo->ssid[MAX_SSID_LEN] = '\0';
-      }
-      body[ie->len] = tmp;
-      body += ie->len;
-      break;
-    default:
-      body += ie->len;
-      break;
-    }
-  }
-}
-
-int
-decode_probeResp(u_char *packet, u_int32_t packetLen,
-                 PacketSummary_t *packetInfo) {
-  struct mgmt_hdr *mgmthdr;
-  struct mgmt_ie_hdr *ie;
-  u_char *body;
-  int i;
-  char tmp;
-
-  mgmthdr = (struct mgmt_hdr *) packet;
-  body = (u_char *) packet + MGMT_HDR_LEN;
-
-  if ((body + FIELD_TS_LEN + FIELD_BI_LEN + FIELD_CAP_LEN) >
-      (packet + packetLen)) {
-    return -1;
-  }
-
-  body += FIELD_TS_LEN;
-
-  body += FIELD_BI_LEN;
-
-  u_char capab = *body;
-
-  if (capab >> 4) {
-    packetInfo->security |= STD_WEP | ENC_WEP;
-  }
-  else {
-    packetInfo->security |= STD_OPN;
-  }
-
-  body += FIELD_CAP_LEN;
-
-  /* Information elements */
-  while (body < (packet + packetLen)) {
-    ie = (struct mgmt_ie_hdr *) body;
-    body += 2;
-    if ((body + ie->len) > (packet + packetLen)) {
-      return -1;
-    }
-
-    switch(ie->id) {
-    case IE_SSID_ID:
-      tmp = body[ie->len];
-      body[ie->len] = '\0';
-      strncpy(packetInfo->ssid, (const char *) body, MAX_SSID_LEN);
-      if (ie->len >= MAX_SSID_LEN) {
-        packetInfo->ssid[MAX_SSID_LEN] = '\0';
-      }
-      body[ie->len] = tmp;
-      body += ie->len;
-      break;
-    default:
-      body += ie->len;
-      break;
-    }
-  }
-}
-
-int
-decode_beacon(u_char *packet, u_int32_t packetLen,
-              PacketSummary_t *packetInfo) {
-  struct mgmt_hdr *mgmthdr;
-  struct mgmt_ie_hdr *ie;
-  u_char *body;
-  int i;
-  char tmp;
-
-  mgmthdr = (struct mgmt_hdr *) packet;
-  body = (u_char *) packet + MGMT_HDR_LEN;
-
-  if ((body + FIELD_TS_LEN + FIELD_BI_LEN + FIELD_CAP_LEN) >
-      (packet + packetLen)) {
-    return -1;
-  }
-
-  body += FIELD_TS_LEN;
-
-  body += FIELD_BI_LEN;
-
-  u_char capab = *body;
-
-  if (capab >> 4) {
-    packetInfo->security |= STD_WEP | ENC_WEP;
-  }
-  else {
-    packetInfo->security |= STD_OPN;
-  }
-
-  body += FIELD_CAP_LEN;
-
-  /* Information elements */
-  while (body < (packet + packetLen)) {
-    u_char *p = body;
-    ie = (struct mgmt_ie_hdr *) body;
-    body += 2;
-    if ((body + ie->len) > (packet + packetLen)) {
-      return -1;
-    }
-
-    int numuni;
-    int numauth;
-    int i;
-
-    switch(ie->id) {
-    case IE_SSID_ID:
-      tmp = body[ie->len];
-      body[ie->len] = '\0';
-      strncpy(packetInfo->ssid, (const char *) body, MAX_SSID_LEN);
-      body[ie->len] = tmp;
-      body += ie->len;
-      break;
-    case 0x30:
-    case 0xDD:
-      if ((ie->id == 0xDD && ie->len > 22 &&
-           memcmp(body, "\x00\x50\xF2\x01\x01\x00", ETH_ALEN) == 0) ||
-          (ie->id  == 0x30)) {
-        packetInfo->security &= ~(STD_WEP | ENC_WEP);
-
-        if (ie->id == 0xDD) {
-          // WPA defined in vendor specific tag -> WPA1 support 
-          packetInfo->security |= STD_WPA; 
-
-          numuni = p[12] + (p[13] << 8); 
-          numauth = p[14 + 4 * numuni] + (p[15 + 4 * numuni] << 8); 
-
-          p = p + 14; // Point at first unicast cipher
-        }
-        else if (ie->id == 0x30) { 
-          packetInfo->security |= STD_WPA2; 
-
-          numuni = p[8] + (p[9] << 8); 
-          numauth = p[10 + 4 * numuni] + (p[11 + 4 * numuni] << 8); 
-
-          p += 10; 
-        } 
-
-        for (i = 0; i < numuni; i++) { 
-          switch(p[i * 4 + 3]) { 
-          case 0x01: 
-            packetInfo->security |= ENC_WEP; 
-            break; 
-          case 0x02: 
-            packetInfo->security |= ENC_TKIP; 
-            break; 
-          case 0x03: 
-            packetInfo->security |= ENC_WRAP; 
-            break; 
-          case 0x04: 
-            packetInfo->security |= ENC_CCMP; 
-            break; 
-          case 0x05: 
-            packetInfo->security |= ENC_WEP104; 
-            break; 
-          default: 
-            break; 
-          } 
-        } 
-
-        p += 2 + 4 * numuni; 
-
-        for (i = 0; i < numauth; i++) { 
-          switch(p[i * 4 + 3]) { 
-          case 0x01: 
-            packetInfo->security |= AUTH_MGT; 
-            break; 
-          case 0x02: 
-            packetInfo->security |= AUTH_PSK; 
-            break; 
-          default: 
-            break; 
-          } 
-        } 
-
-        p += 2 + 4 * numauth; 
-        if (ie->id == 0x30) {
-          p += 2;
-        }
-      }
-      body += ie->len;
-      break;
-    default:
-      body += ie->len;
-      break;
-    }
-  }
-}
-
-void copy_ether_addr(struct ether_addr *destAddr, struct ether_addr *srcAddr) {
-  int i;
-
-  for (i = 0; i < ETH_ALEN; i++) {
-    destAddr->ether_addr_octet[i] = srcAddr->ether_addr_octet[i];
-  }
-}
-
-const char *
-get_ieee80211_type(struct frame_control *control) {
-  switch (control->type) {
-  case MGMT:
-    return "Management";
-  case 1:
-    return "Control";
-  case 2:
-    return "Data";
-  case 3:
-    return "Reserved";
-  default:
-    break;
-  }
-
-  return "";
-}
-
-const char *
-get_ieee80211_subtype(struct frame_control *control) {
-  if (control->type == MGMT) {
-    switch (control->subtype) {
-    case SUBTYPE_BITFIELD(ASSOCREQ_TYPE):
-      return "Association request";
-    case SUBTYPE_BITFIELD(ASSOCRESP_TYPE):
-      return "Association response";
-    case SUBTYPE_BITFIELD(REASSOCREQ_TYPE):
-      return "Reassociation request";
-    case SUBTYPE_BITFIELD(REASSOCRESP_TYPE):
-      return "Reassociation response";
-    case SUBTYPE_BITFIELD(PROBEREQ_TYPE):
-      return "Probe request";
-    case SUBTYPE_BITFIELD(PROBERESP_TYPE):
-      return "Probe response";
-    case SUBTYPE_BITFIELD(BEACON_TYPE):
-      return "Beacon";
-    case SUBTYPE_BITFIELD(ATIM_TYPE):
-      return "ATIM";
-    case SUBTYPE_BITFIELD(DISASSOCIATE_TYPE):
-      return "Disassociation";
-    case SUBTYPE_BITFIELD(AUTH_TYPE):
-      return "Authentication";
-    case SUBTYPE_BITFIELD(DEAUTH_TYPE):
-      return "Deauthentication";
-    case SUBTYPE_BITFIELD(ACTION_FRAME_TYPE):
-      return "Action frame";
-    default:
-      return "Reserved";
-    }
-  }
-  else if (control->type == 1) {
-    switch (control->subtype) {
-    case SUBTYPE_BITFIELD(BLOCKACKREQ_TYPE):
-      return "Block ACK request";
-    case SUBTYPE_BITFIELD(BLOCKACK_TYPE):
-      return "Block ACK";
-    case SUBTYPE_BITFIELD(PS_POLL_TYPE):
-      return "Power Save (PS)-Poll";
-    case SUBTYPE_BITFIELD(RTS_TYPE):
-      return "Request To Send (RTS)";
-    case SUBTYPE_BITFIELD(CTS_TYPE):
-      return "Clear To Send (CTS)";
-    case SUBTYPE_BITFIELD(ACK_TYPE):
-      return "Acknowledgment (ACK)";
-    case SUBTYPE_BITFIELD(CF_END_TYPE):
-      return "Contention-Free (CF)";
-    case SUBTYPE_BITFIELD(CF_END_ACK_TYPE):
-      return "CF-End + CF-Ack";
-    default:
-      return "Reserved";
-    }
-  }
-  else if (control->type == 2) {
-    switch (control->subtype) {
-    case 0:
-      return "Data";
-    case 1:
-      return "Data + CF-Ack";
-    case 2:
-      return "Data + CF-Poll";
-    case 3:
-      return "Data + CF-Ack + CF-Poll";
-    case 4:
-      return "Null function (no data)";
-    case 5:
-      return "CF-Ack (no data)";
-    case 6:
-      return "CF-Poll (no data)";
-    case 7:
-      return "CF-Ack + CF-Poll (no data)";
-    case 8:
-      return "QoS Data";
-    case 9:
-      return "QoS Data + CF-Ack";
-    case 10:
-      return "QoS Data + CF-Poll";
-    case 11:
-      return "QoS Data + CF-Ack + CF-Poll";
-    case 12:
-      return "Null QoS Data";
-    case 14:
-      return "Null QoS Data + CF-Poll";
-    case 15:
-      return "Null QoS Data + CF-Ack + CF-Poll";
-    default:
-      return "Reserved";
-    }
-  }
-  else if (control->type == 3) {
-    return "Reserved";
-  }
-
-  return "";
-}
-
-/* Ethernet Handler */
-u_int16_t
-ethernet_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
-                 const u_char *packet) {
-  WscanContext_t *context = (WscanContext_t *) user;
-  u_int caplen = pkthdr->caplen; /* Length of portion present from bpf  */
-  u_int length = pkthdr->len;    /* Length of this packet off the wire  */
-  struct ether_header *eptr;     /* net/ethernet.h                      */
-  u_short ether_type;            /* The type of packet (we return this) */
-  eptr = (struct ether_header *) packet;
-  ether_type = ntohs(eptr->ether_type);
-
-  if (caplen < 14) {
-    char errStr[80];
-    sprintf(errStr, "Packet length (%d) is less than header length", caplen);
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
-
-    return -1;
-  }
-
-  if (context->eflag) {
-    fprintf(context->out,"eth: ");
-    fprintf(context->out, "%s ",
-            ether_ntoa((struct ether_addr *) eptr->ether_shost));
-    fprintf(context->out, "%s ",
-            ether_ntoa((struct ether_addr *) eptr->ether_dhost));
-
-    /* Get type and use as the beginning of the message line */
-    if (ether_type == ETHERTYPE_IP) {
-      fprintf(context->out, "(ip)");
-    } else  if (ether_type == ETHERTYPE_ARP) {
-      fprintf(context->out, "(arp)");
-    } else  if (eptr->ether_type == ETHERTYPE_REVARP) {
-      fprintf(context->out, "(rarp)");
-    } else {
-      fprintf(context->out, "(0x%04x)", ether_type);
-    }
-  }
-
-  return ether_type;
-}
-
-/* IP Handler */
-u_char *
-ip_handler(u_char *user, const struct pcap_pkthdr *pkthdr,
-           const u_char *packet) {
-  WscanContext_t *context = (WscanContext_t *) user;
-  const struct nread_ip *ip;   /* Packet structure      */ 
-  const struct tcphdr *tcp;    /* TCP structure         */
-  u_int length = pkthdr->len;  /* Packet header length  */
-  u_int hlen, off, version;    /* Offset, version       */
-  int len;                     /* Length holder         */
-
-  ip = (struct nread_ip *) (packet + sizeof(struct ether_header));
-  length -= sizeof(struct ether_header);
-  tcp = (struct tcphdr *)
-    (packet + sizeof(struct ether_header) + sizeof(struct nread_ip));
-   
-  hlen    = IP_HL(ip);         /* get header length */ 
-  len     = ntohs(ip->ip_len); /* get packet length */
-  version = IP_V(ip);          /* get ip version    */
-
-  if (hlen < 5 ) {
-    char errStr[80];
-    sprintf(errStr, "Alert: Bad header length %d", hlen);
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
-  }
-
-  if (length < len) {
-    char errStr[80];
-    sprintf(errStr, "Alert: Truncated %d bytes missing.", len - length);
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
-  }
-
-  off = ntohs(ip->ip_off);
-
-  if ((off & 0x1fff) == 0 ) { /* aka no 1's in first 13 bits */
-    if (context->vflag > 3) {
-      fprintf(context->out,"ip: ");
-    }
-
-    if (context->vflag > 0) {
-      fprintf(context->out, "%s:%u->%s:%u ",
-              inet_ntoa(ip->ip_src), tcp->source,
-              inet_ntoa(ip->ip_dst), tcp->dest);
-    }
-
-    if (context->vflag > 1) {
-      fprintf(context->out, "tos %u len %u off %u ttl %u prot %u cksum %u ",
-              ip->ip_tos, len, off, ip->ip_ttl,
-              ip->ip_p, ip->ip_sum);
-    }
-
-    if (context->vflag > 2) {
-      fprintf(context->out, "seq %u ack %u win %u ",
-              tcp->seq, tcp->ack_seq, tcp->window);
-    }
-
-    if (context->vflag > 3) {
-      if (ip->ip_p == PROTO_TCP) {
-        if (length > sizeof(struct nread_ip) + sizeof(struct tcphdr)) {
-          /* There is TCP/UDP payload */
-          size_t payload_length = length - (hlen * 4);
-          payload_length -= sizeof(struct tcphdr);
-          memcpy(payload, tcp + sizeof(struct tcphdr), payload_length);
-          fprintf(context->out, "tcp ");
-          dump_payload(payload, payload_length);
-        }
-      }
-      if (ip->ip_p == PROTO_UDP) {
-        if (length > sizeof(struct nread_ip) + UDP_HEADER_SIZE) {
-          fprintf(context->out, "udp ");
-          size_t payload_length = length - (hlen * 4);
-          payload_length -= UDP_HEADER_SIZE;
-          dump_payload(payload, payload_length);
-        }
-      }
-    }
-
-    if (context->vflag > 0) {
-      fprintf(context->out, "\n");
-    }
-  }
-
-  return NULL;
-}
-
-void
-dump_payload(char *payload, size_t payload_length) {
-  size_t i;
-  for (i = 0; i < payload_length; i++) {
-    char c = payload[i];
-    if (c < 32 || c > 126)
-      fputc('.', stdout);
-    else
-      fputc(c, stdout);
-  }
-}
-
 /* Callback */
 void
-pcap_callback(u_char *user, const struct pcap_pkthdr *pkthdr,
-              const u_char *packet) {
+pcap_callback(uint8_t* user, const struct pcap_pkthdr* pkthdr,
+              const uint8_t* packet_data) {
+  PacketHandler packet_handler;
+  Packet packet(pkthdr, packet_data);
   WscanContext_t *context;
   PacketSummary_t packetSummary;
   int i;
@@ -1185,12 +370,12 @@ pcap_callback(u_char *user, const struct pcap_pkthdr *pkthdr,
   context = (WscanContext_t *) user;
 
   if (context->dumper != NULL) {
-    pcap_dump((u_char *) context->dumper, pkthdr, packet);
+    pcap_dump((uint8_t*) context->dumper, pkthdr, packet_data);
   }
 
   if (context->vflag > 3) {
     for (i = 0; i < pkthdr->len; i++) {
-      fprintf(context->out, "%02x ", packet[i]);
+      fprintf(context->out, "%02x ", packet_data[i]);
       if (i % 16 == 15)
         fprintf(context->out, "\n");
     }
@@ -1201,8 +386,10 @@ pcap_callback(u_char *user, const struct pcap_pkthdr *pkthdr,
   }
 
   if (context != NULL && context->datalink == DLT_IEEE802_11_RADIO) {
-    radiotap_handler(user, pkthdr, packet, &packetSummary);
-    ieee802_11_handler(user, pkthdr, packet, &packetSummary);
+    packet_handler.radiotap_handler(&packet, user, &packetSummary);
+    logRadiotap(user, &packetSummary); 
+    packet_handler.ieee802_11_handler(&packet, user, &packetSummary);
+    log80211(&packet, user, &packetSummary);
 
     updateNetworkResources(context, &packetSummary);
 
@@ -1211,10 +398,10 @@ pcap_callback(u_char *user, const struct pcap_pkthdr *pkthdr,
     }
   }
 
-  u_int16_t type = ethernet_handler(user, pkthdr, packet);
+  u_int16_t type = packet_handler.ethernet_handler(&packet, user);
 
   if (type == ETHERTYPE_IP) {
-    ip_handler(user, pkthdr, packet);
+    packet_handler.ip_handler(&packet, user);
   } else if (type == ETHERTYPE_ARP) {
     if (context->eflag && context->vflag > 0) {
       fprintf(context->out, "\n");
@@ -1433,7 +620,7 @@ monitorInterface(void *ctx) {
   context->descr = descr;
 
   pcap_loop(descr, context->npkts, pcap_callback,
-            (u_char *) context); /* Loop pcap */
+            (uint8_t *) context); /* Loop pcap */
 
   if (context->dumper != NULL) {
     pcap_dump_close(context->dumper);

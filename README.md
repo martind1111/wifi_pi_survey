@@ -7,13 +7,7 @@ Project documentation: http://mdubuc.freeshell.org/WifiPiSurvey
 The following packages must be installed on the Raspberry Pi to be able to build this project:
 
 ```
-sudo apt-get install cmake
-sudo apt-get install libsqlite3-dev
-sudo apt-get install libgps-dev
-sudo apt-get install libpcap-dev
-sudo apt-get install libpcre-dev
-sudo apt-get install libgtest-dev
-sudo apt-get install wireshark
+sudo apt-get install cmake libsqlite3-dev libgps-dev libpcap-dev libpcre3-dev libgtest-dev wireshark
 ```
 
 # Build instructions #

@@ -12,6 +12,8 @@
 #include "airodump-ng.h"
 #include "manufacturer.h"
 
+#include "PacketSummary.h"
+
 static struct ether_addr BROADCAST_ADDRESS;
 static struct ether_addr MULTICAST_ADDRESS;
 static struct ether_addr MULTICAST_IPV6_ADDRESS;

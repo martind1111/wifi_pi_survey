@@ -1,5 +1,5 @@
-#ifndef _HEARTBEAT_H
-#define _HEARTBEAT_H
+#ifndef _HEARTBEAT_TYPES_H
+#define _HEARTBEAT_TYPES_H
 
 typedef enum {
   ACTIVITY_MONITOR_INTERFACE,
@@ -20,8 +20,4 @@ operator++(Activity_t& a, int) {
   return prev;
 }
 
-void *monitorHeartbeat(void *context);
-
-void reportActivity(const Activity_t activity);
-
-#endif // _HEARTBEAT_H
+#endif // _HEARTBEAT_TYPES_H

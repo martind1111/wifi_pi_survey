@@ -25,7 +25,7 @@
 #include "wiringPiI2C.h"
 #include <algorithm>
 
-#include "wscan.h"
+#include "Application.h"
 #include "pkt.h"
 #include "wifi_types.h"
 #include "radiotap.h"
@@ -43,17 +43,197 @@ extern "C" {
 #include "manufacturer.h"
 
 #include "Packet.h"
-#include "PacketSummary.h"
+#include "WifiMetadata.h"
 #include "PacketDecoder.h"
 
 namespace {
+void DecodeRadiotap(const Packet* packet, void* user,
+                    WifiMetadata* wifiMetadata);
+
+void DecodeIeee80211(const Packet* packet, void* user,
+                     WifiMetadata* wifiMetadata);
+
+void ParseAddresses(const Packet* packet,
+                    WifiMetadata* wifiMetadata);
+
+int DecodeAssocReq(const uint8_t *packet_data, size_t packetLen,
+                   WifiMetadata* wifiMetadata);
+int DecodeBeacon(const uint8_t* packet, size_t packetLen,
+                 WifiMetadata* wifiMetadata);
+int DecodeProbeResp(const uint8_t* packet, size_t packetLen,
+                    WifiMetadata *wifiMetadata);
+
 void copy_ether_addr(struct ether_addr* destAddr,
                      const struct ether_addr* srcAddr);
+void updateSecurity(WifiMetadata *wifiMetadata);
+}
+
+using namespace std;
+
+void PacketDecoder::Decode(const Packet* packet, void* user,
+                           WifiMetadata* wifiMetadata) {
+    DecodeRadiotap(packet, user, wifiMetadata);
+    DecodeIeee80211(packet, user, wifiMetadata);
+}
+
+namespace {
+/* Decode Radiotap header */
+void
+DecodeRadiotap(const Packet* packet, void* user,
+               WifiMetadata* wifiMetadata) {
+  const uint8_t* packet_data = packet->GetData();
+  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(user);
+  size_t caplen = packet->GetCaptureLength(); // Length of portion present from
+                                              // BPF
+  size_t length = packet->GetLength(); // Length of this packet off the wire
+
+  const struct ieee80211_radiotap_header* radiotap_hdr =
+    (const struct ieee80211_radiotap_header*) packet_data;
+  uint16_t radiotap_len = radiotap_hdr->it_len;
+
+  if (caplen - radiotap_len < RT_VERSION_LEN + RT_LENGTH_LEN) {
+    char errStr[256];
+
+    sprintf(errStr, "Packet length is less than %d bytes: "
+            "Invalid 802.11 radiotap header", RT_VERSION_LEN + RT_LENGTH_LEN);
+
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+
+    return;
+  }
+
+  int antenna = 0, pwr = 0;
+  wifiMetadata->channel = 0;
+  wifiMetadata->rate = 0;
+  wifiMetadata->txPower = 0;
+  wifiMetadata->antenna = 0;
+  wifiMetadata->dbSignal = 0;
+  wifiMetadata->dbNoise = 0;
+  wifiMetadata->dbSnr = 0;
+  wifiMetadata->dbmSignal = 0;
+  wifiMetadata->dbmNoise = 0;
+  wifiMetadata->dbmSnr = 0;
+  struct ieee80211_radiotap_iterator iterator;
+  int ret = ieee80211_radiotap_iterator_init(
+    &iterator,
+    const_cast<ieee80211_radiotap_header*>(radiotap_hdr),
+    radiotap_len);
+  while (!ret) {
+    ret = ieee80211_radiotap_iterator_next(&iterator);
+
+    if (ret)
+      continue;
+
+    /* See if this argument is something we can use */
+
+    switch (iterator.this_arg_index) {
+    /*
+     * You must take care when dereferencing iterator.this_arg
+     * for multibyte types. The pointer is not aligned. Use
+     * get_unaligned((type *)iterator.this_arg) to dereference
+     * iterator.this_arg for type "type" safely on all architectures.
+     */
+    case IEEE80211_RADIOTAP_RATE:
+      /* radiotap "rate" u8 is in
+       * 500 kbps units, eg, 0x02=1Mbps
+       */
+      wifiMetadata->rate = (*iterator.this_arg) * 5; // In units of 100 kHz
+      break;
+
+    case IEEE80211_RADIOTAP_CHANNEL:
+      wifiMetadata->channel = *((uint16_t *) iterator.this_arg);
+      break;
+
+    case IEEE80211_RADIOTAP_ANTENNA:
+      /* radiotap uses 0 for 1st ant */
+      wifiMetadata->antenna = *iterator.this_arg;
+      break;
+
+    case IEEE80211_RADIOTAP_DBM_TX_POWER:
+      wifiMetadata->txPower = *iterator.this_arg;
+      break;
+
+    case IEEE80211_RADIOTAP_DBM_ANTNOISE:
+      wifiMetadata->dbmNoise = *iterator.this_arg;
+      break;
+
+    case IEEE80211_RADIOTAP_DBM_ANTSIGNAL:
+      wifiMetadata->dbmSignal = *iterator.this_arg;
+      break;
+
+    case IEEE80211_RADIOTAP_DB_ANTNOISE:
+      wifiMetadata->dbNoise = *iterator.this_arg;
+      break;
+
+    case IEEE80211_RADIOTAP_DB_ANTSIGNAL:
+      wifiMetadata->dbSignal = *iterator.this_arg;
+      break;
+
+    default:
+      break;
+    }
+  }  /* while more rt headers */
+}
+
+/* Decode IEEE 802.11 header */
+void
+DecodeIeee80211(const Packet* packet, void* user,
+                WifiMetadata* wifiMetadata) {
+  const uint8_t* packet_data = packet->GetData();
+  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(user);
+  size_t caplen =
+    packet->GetCaptureLength(); // Length of portion present from BPF
+  size_t length = packet->GetLength(); // Length of this packet off the wire
+
+  wifiMetadata->timestamp = packet->GetTimestamp();
+
+  const struct ieee80211_radiotap_header* radiotap_hdr =
+    (const struct ieee80211_radiotap_header*) packet_data;
+  uint16_t radiotap_len = radiotap_hdr->it_len;
+
+  if (caplen - radiotap_len < FC_LEN) {
+    char errStr[256];
+
+    sprintf(errStr, "Packet length is less than 2 bytes: "
+            "Invalid 802.11 MAC header");
+
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+
+    return;
+  }
+
+  const struct mac_header* p =
+    (const struct mac_header*) (packet_data + radiotap_len);
+  const struct frame_control* control = (struct frame_control*) p->fc;
+
+  wifiMetadata->security = 0;
+
+  wifiMetadata->fromDs = control->from_ds;
+  wifiMetadata->toDs = control->to_ds;
+
+  ParseAddresses(packet, wifiMetadata);
+
+  updateSecurity(wifiMetadata);
+
+  wifiMetadata->ssid[0] = 0;
+
+  if (control->type == MGMT &&
+      control->subtype == SUBTYPE_BITFIELD(ASSOCREQ_TYPE)) {
+    DecodeAssocReq((uint8_t*) p, caplen - radiotap_len, wifiMetadata);
+  }
+  else if (control->type == MGMT &&
+           control->subtype == SUBTYPE_BITFIELD(BEACON_TYPE)) {
+    DecodeBeacon((uint8_t*) p, caplen - radiotap_len, wifiMetadata);
+  }
+  else if (control->type == MGMT &&
+           control->subtype == SUBTYPE_BITFIELD(PROBERESP_TYPE)) {
+    DecodeProbeResp((uint8_t*) p, caplen - radiotap_len, wifiMetadata);
+  }
 }
 
 void
-PacketDecoder::ParseAddresses(const Packet* packet,
-                              PacketSummary_t* packetInfo) {
+ParseAddresses(const Packet* packet,
+               WifiMetadata* wifiMetadata) {
   size_t caplen =
     packet->GetCaptureLength(); // Length of portion present from BPF
   size_t length = packet->GetLength(); // Length of this packet off the wire
@@ -65,142 +245,142 @@ PacketDecoder::ParseAddresses(const Packet* packet,
   const struct frame_control* control = (struct frame_control*) p->fc;
 
   // Extract MAC address
-  packetInfo->bssidPresent = false;
-  memset(&packetInfo->bssid, 0, ETH_ALEN);
-  packetInfo->srcAddrPresent = false;
-  memset(&packetInfo->srcAddr, 0, ETH_ALEN);
-  packetInfo->destAddrPresent = false;
-  memset(&packetInfo->destAddr, 0, ETH_ALEN);
-  packetInfo->raPresent = false;
-  memset(&packetInfo->ra, 0, ETH_ALEN);
-  packetInfo->taPresent = false;
-  memset(&packetInfo->ta, 0, ETH_ALEN);
+  wifiMetadata->bssidPresent = false;
+  memset(&wifiMetadata->bssid, 0, ETH_ALEN);
+  wifiMetadata->srcAddrPresent = false;
+  memset(&wifiMetadata->srcAddr, 0, ETH_ALEN);
+  wifiMetadata->destAddrPresent = false;
+  memset(&wifiMetadata->destAddr, 0, ETH_ALEN);
+  wifiMetadata->raPresent = false;
+  memset(&wifiMetadata->ra, 0, ETH_ALEN);
+  wifiMetadata->taPresent = false;
+  memset(&wifiMetadata->ta, 0, ETH_ALEN);
 
   if (control->type == 0x01 &&
       control->subtype == SUBTYPE_BITFIELD(BLOCKACK_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
+      wifiMetadata->raPresent = true;
+      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->taPresent = true;
-      copy_ether_addr(&packetInfo->ta, &p->addr2);
+      wifiMetadata->taPresent = true;
+      copy_ether_addr(&wifiMetadata->ta, &p->addr2);
     }
   }
   else if (control->type == 0x01 &&
       control->subtype == SUBTYPE_BITFIELD(PS_POLL_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->bssidPresent = true;
-      copy_ether_addr(&packetInfo->bssid, &p->addr1);
+      wifiMetadata->bssidPresent = true;
+      copy_ether_addr(&wifiMetadata->bssid, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr2);
+      wifiMetadata->raPresent = true;
+      copy_ether_addr(&wifiMetadata->ra, &p->addr2);
     }
   }
   else if (control->type == 0x01 &&
            control->subtype == SUBTYPE_BITFIELD(RTS_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
+      wifiMetadata->raPresent = true;
+      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->taPresent = true;
-      copy_ether_addr(&packetInfo->ta, &p->addr2);
+      wifiMetadata->taPresent = true;
+      copy_ether_addr(&wifiMetadata->ta, &p->addr2);
     }
   }
   else if (control->type == 0x01 &&
            control->subtype == SUBTYPE_BITFIELD(CTS_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
+      wifiMetadata->raPresent = true;
+      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
     }
   }
   else if (control->type == 0x01 &&
            control->subtype == SUBTYPE_BITFIELD(ACK_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
+      wifiMetadata->raPresent = true;
+      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
     }
   }
   else if (control->to_ds == 0 && control->from_ds == 0) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->destAddrPresent = true;
-      copy_ether_addr(&packetInfo->destAddr, &p->addr1);
+      wifiMetadata->destAddrPresent = true;
+      copy_ether_addr(&wifiMetadata->destAddr, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->srcAddrPresent = true;
-      copy_ether_addr(&packetInfo->srcAddr, &p->addr2);
+      wifiMetadata->srcAddrPresent = true;
+      copy_ether_addr(&wifiMetadata->srcAddr, &p->addr2);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
-      packetInfo->bssidPresent = true;
-      copy_ether_addr(&packetInfo->bssid, &p->addr3);
+      wifiMetadata->bssidPresent = true;
+      copy_ether_addr(&wifiMetadata->bssid, &p->addr3);
     }
   }
   else if (control->to_ds == 0 && control->from_ds == 1) {
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->destAddrPresent = true;
-      copy_ether_addr(&packetInfo->destAddr, &p->addr1);
+      wifiMetadata->destAddrPresent = true;
+      copy_ether_addr(&wifiMetadata->destAddr, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->bssidPresent = true;
-      copy_ether_addr(&packetInfo->bssid, &p->addr2);
+      wifiMetadata->bssidPresent = true;
+      copy_ether_addr(&wifiMetadata->bssid, &p->addr2);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
-      packetInfo->srcAddrPresent = true;
-      copy_ether_addr(&packetInfo->srcAddr, &p->addr3);
+      wifiMetadata->srcAddrPresent = true;
+      copy_ether_addr(&wifiMetadata->srcAddr, &p->addr3);
     }
   }
   else if (control->to_ds == 1 && control->from_ds == 0) {
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->bssidPresent = true;
-      copy_ether_addr(&packetInfo->bssid, &p->addr1);
+      wifiMetadata->bssidPresent = true;
+      copy_ether_addr(&wifiMetadata->bssid, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->srcAddrPresent = true;
-      copy_ether_addr(&packetInfo->srcAddr, &p->addr2);
+      wifiMetadata->srcAddrPresent = true;
+      copy_ether_addr(&wifiMetadata->srcAddr, &p->addr2);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
-      packetInfo->destAddrPresent = true;
-      copy_ether_addr(&packetInfo->destAddr, &p->addr3);
+      wifiMetadata->destAddrPresent = true;
+      copy_ether_addr(&wifiMetadata->destAddr, &p->addr3);
     }
   }
   else if (control->to_ds == 1 && control->from_ds == 1) {
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
-      packetInfo->raPresent = true;
-      copy_ether_addr(&packetInfo->ra, &p->addr1);
+      wifiMetadata->raPresent = true;
+      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
-      packetInfo->taPresent = true;
-      copy_ether_addr(&packetInfo->ta, &p->addr2);
+      wifiMetadata->taPresent = true;
+      copy_ether_addr(&wifiMetadata->ta, &p->addr2);
     }
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
-      packetInfo->destAddrPresent = true;
-      copy_ether_addr(&packetInfo->destAddr, &p->addr3);
+      wifiMetadata->destAddrPresent = true;
+      copy_ether_addr(&wifiMetadata->destAddr, &p->addr3);
     }
   }
 }
@@ -211,8 +391,8 @@ PacketDecoder::ParseAddresses(const Packet* packet,
  * @return -1 if error, 0 otherwise.
  */
 int
-PacketDecoder::DecodeAssocReq(const uint8_t *packet_data, size_t packetLen,
-                              PacketSummary_t* packetInfo) {
+DecodeAssocReq(const uint8_t *packet_data, size_t packetLen,
+               WifiMetadata* wifiMetadata) {
   const struct mgmt_hdr* mgmthdr;
   const struct mgmt_ie_hdr* ie;
   const uint8_t* body;
@@ -227,12 +407,12 @@ PacketDecoder::DecodeAssocReq(const uint8_t *packet_data, size_t packetLen,
 
   const uint8_t capab = *body;
 
-  if (packetInfo->security & STD_WEP) {
+  if (wifiMetadata->security & STD_WEP) {
     if (capab == 0x00) {
-      packetInfo->security |= AUTH_OPN;
+      wifiMetadata->security |= AUTH_OPN;
     }
     if (capab == 0x01) {
-      packetInfo->security |= AUTH_PSK;
+      wifiMetadata->security |= AUTH_PSK;
     }
   }
 
@@ -252,8 +432,8 @@ PacketDecoder::DecodeAssocReq(const uint8_t *packet_data, size_t packetLen,
     switch(ie->id) {
     case IE_SSID_ID:
       ssid_len = std::min(ie->len, static_cast<const uint8_t>(MAX_SSID_LEN));
-      memcpy(packetInfo->ssid, body, ssid_len);
-      packetInfo->ssid[ssid_len] = '\0';
+      memcpy(wifiMetadata->ssid, body, ssid_len);
+      wifiMetadata->ssid[ssid_len] = '\0';
       body += ie->len;
       break;
     default:
@@ -266,8 +446,8 @@ PacketDecoder::DecodeAssocReq(const uint8_t *packet_data, size_t packetLen,
 }
 
 int
-PacketDecoder::DecodeProbeResp(const uint8_t* packet_data, size_t packetLen,
-                               PacketSummary_t* packetInfo) {
+DecodeProbeResp(const uint8_t* packet_data, size_t packetLen,
+                WifiMetadata* wifiMetadata) {
   const struct mgmt_hdr* mgmthdr;
   const struct mgmt_ie_hdr* ie;
   const uint8_t* body;
@@ -288,10 +468,10 @@ PacketDecoder::DecodeProbeResp(const uint8_t* packet_data, size_t packetLen,
   const uint8_t capab = *body;
 
   if (capab >> 4) {
-    packetInfo->security |= STD_WEP | ENC_WEP;
+    wifiMetadata->security |= STD_WEP | ENC_WEP;
   }
   else {
-    packetInfo->security |= STD_OPN;
+    wifiMetadata->security |= STD_OPN;
   }
 
   body += FIELD_CAP_LEN;
@@ -308,10 +488,10 @@ PacketDecoder::DecodeProbeResp(const uint8_t* packet_data, size_t packetLen,
     switch(ie->id) {
     case IE_SSID_ID:
       ssid_len = std::min(ie->len, static_cast<uint8_t>(MAX_SSID_LEN));
-      memcpy(packetInfo->ssid, body, ssid_len);
-      packetInfo->ssid[ssid_len] = '\0';
+      memcpy(wifiMetadata->ssid, body, ssid_len);
+      wifiMetadata->ssid[ssid_len] = '\0';
       if (ie->len >= MAX_SSID_LEN) {
-        packetInfo->ssid[MAX_SSID_LEN] = '\0';
+        wifiMetadata->ssid[MAX_SSID_LEN] = '\0';
       }
       body += ie->len;
       break;
@@ -325,8 +505,8 @@ PacketDecoder::DecodeProbeResp(const uint8_t* packet_data, size_t packetLen,
 }
 
 int
-PacketDecoder::DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
-                            PacketSummary_t* packetInfo) {
+DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
+             WifiMetadata* wifiMetadata) {
   const struct mgmt_hdr* mgmthdr;
   const struct mgmt_ie_hdr* ie;
   const uint8_t* body;
@@ -348,10 +528,10 @@ PacketDecoder::DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
   const uint8_t capab = *body;
 
   if (capab >> 4) {
-    packetInfo->security |= STD_WEP | ENC_WEP;
+    wifiMetadata->security |= STD_WEP | ENC_WEP;
   }
   else {
-    packetInfo->security |= STD_OPN;
+    wifiMetadata->security |= STD_OPN;
   }
 
   body += FIELD_CAP_LEN;
@@ -372,8 +552,8 @@ PacketDecoder::DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
     switch(ie->id) {
     case IE_SSID_ID:
       ssid_len = std::min(ie->len, static_cast<uint8_t>(MAX_SSID_LEN));
-      memcpy(packetInfo->ssid, body, ssid_len);
-      packetInfo->ssid[ssid_len] = '\0';
+      memcpy(wifiMetadata->ssid, body, ssid_len);
+      wifiMetadata->ssid[ssid_len] = '\0';
       body += ie->len;
       break;
     case 0x30:
@@ -381,11 +561,11 @@ PacketDecoder::DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
       if ((ie->id == 0xDD && ie->len > 22 &&
            memcmp(body, "\x00\x50\xF2\x01\x01\x00", ETH_ALEN) == 0) ||
           (ie->id  == 0x30)) {
-        packetInfo->security &= ~(STD_WEP | ENC_WEP);
+        wifiMetadata->security &= ~(STD_WEP | ENC_WEP);
 
         if (ie->id == 0xDD) {
           // WPA defined in vendor specific tag -> WPA1 support
-          packetInfo->security |= STD_WPA;
+          wifiMetadata->security |= STD_WPA;
 
           numuni = p[12] + (p[13] << 8);
           numauth = p[14 + 4 * numuni] + (p[15 + 4 * numuni] << 8);
@@ -393,7 +573,7 @@ PacketDecoder::DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
           p = p + 14; // Point at first unicast cipher
         }
         else if (ie->id == 0x30) {
-          packetInfo->security |= STD_WPA2;
+          wifiMetadata->security |= STD_WPA2;
 
           numuni = p[8] + (p[9] << 8);
           numauth = p[10 + 4 * numuni] + (p[11 + 4 * numuni] << 8);
@@ -404,19 +584,19 @@ PacketDecoder::DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
         for (i = 0; i < numuni; i++) {
           switch(p[i * 4 + 3]) {
           case 0x01:
-            packetInfo->security |= ENC_WEP;
+            wifiMetadata->security |= ENC_WEP;
             break;
           case 0x02:
-            packetInfo->security |= ENC_TKIP;
+            wifiMetadata->security |= ENC_TKIP;
             break;
           case 0x03:
-            packetInfo->security |= ENC_WRAP;
+            wifiMetadata->security |= ENC_WRAP;
             break;
           case 0x04:
-            packetInfo->security |= ENC_CCMP;
+            wifiMetadata->security |= ENC_CCMP;
             break;
           case 0x05:
-            packetInfo->security |= ENC_WEP104;
+            wifiMetadata->security |= ENC_WEP104;
             break;
           default:
             break;
@@ -428,10 +608,10 @@ PacketDecoder::DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
         for (i = 0; i < numauth; i++) {
           switch(p[i * 4 + 3]) {
           case 0x01:
-            packetInfo->security |= AUTH_MGT;
+            wifiMetadata->security |= AUTH_MGT;
             break;
           case 0x02:
-            packetInfo->security |= AUTH_PSK;
+            wifiMetadata->security |= AUTH_PSK;
             break;
           default:
             break;
@@ -455,13 +635,28 @@ PacketDecoder::DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
 }
 
 
-namespace {
 void copy_ether_addr(struct ether_addr *destAddr,
                      const struct ether_addr *srcAddr) {
   int i;
 
   for (i = 0; i < ETH_ALEN; i++) {
     destAddr->ether_addr_octet[i] = srcAddr->ether_addr_octet[i];
+  }
+}
+
+void
+updateSecurity(WifiMetadata* wifiMetadata) {
+  wifiMetadata->security = 0;
+
+  if (!wifiMetadata->bssidPresent) {
+    return;
+  }
+
+  NetworkInfo_t networkInfo;
+  string bssid = string(ether_ntoa(&wifiMetadata->bssid));
+
+  if (getNetwork(bssid, networkInfo)) {
+    wifiMetadata->security = networkInfo.security;
   }
 }
 } // namespace

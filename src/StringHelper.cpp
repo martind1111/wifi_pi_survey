@@ -1,11 +1,11 @@
-#include "string_utils.h"
+#include "StringHelper.h"
 
 using namespace std;
 
 void
-replaceSubstring(string* const cpstrSource,
-                 const string& refcstrSearch,
-                 const string& refcstrReplace) {
+StringHelper::replaceSubstring(string* const cpstrSource,
+                               const string& refcstrSearch,
+                               const string& refcstrReplace) {
   string::size_type pos = 0;
 
   while ((pos = cpstrSource->find(refcstrSearch, pos)) != std::string::npos) {
@@ -15,7 +15,7 @@ replaceSubstring(string* const cpstrSource,
 }
 
 string
-escapeSpecialCharacters(const string& value) {
+StringHelper::escapeSpecialCharacters(const string& value) {
   string escaped = value;
 
   replaceSubstring(&escaped, "'", "''");
@@ -24,7 +24,7 @@ escapeSpecialCharacters(const string& value) {
 }
 
 string
-escapeHtml(const string& value) {
+StringHelper::escapeHtml(const string& value) {
   string escaped = value;
   int i;
 

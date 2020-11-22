@@ -1,26 +1,31 @@
 #include <map>
 #include <sstream>
-#include <pthread.h>
 #include <syslog.h>
 #include <unistd.h>
 #include <stdint.h>
 
-#include "heartbeat.h"
-#include "wscan.h"
+#include "HeartbeatMonitor.h"
+#include "Application.h"
 
 using namespace std;
 
-pthread_mutex_t threadStatusMutex = PTHREAD_MUTEX_INITIALIZER;
+void*
+MonitorHeartbeat(void* ctx) {
+    ApplicationContext* context = reinterpret_cast<ApplicationContext*>(ctx);
+    HeartbeatMonitor monitor(context);
 
-static void logThreadStatus(WscanContext_t *context);
+    context->SetHeartbeatMonitor(&monitor);
 
-map<Activity_t, bool> threadStatus;
+    monitor.Run();
+
+    return nullptr;
+}
 
 void
-reportActivity(const Activity_t activity) {
+HeartbeatMonitor::ReportActivity(const Activity_t activity) {
   pthread_mutex_lock(&threadStatusMutex);
 
-  map<Activity_t, bool>::iterator iter = threadStatus.find(activity);
+  std::map<Activity_t, bool>::iterator iter = threadStatus.find(activity);
 
   if (iter != threadStatus.end()) {
     iter->second = true;
@@ -29,8 +34,27 @@ reportActivity(const Activity_t activity) {
   pthread_mutex_unlock(&threadStatusMutex);
 }
 
-static void
-logThreadStatus(WscanContext_t *context) {
+void
+HeartbeatMonitor::Run() {
+  Activity_t i;
+
+  for (i = ACTIVITY_MONITOR_INTERFACE; i != ACTIVITY_LAST; i++) {
+    threadStatus[i] = false;
+  }
+
+  for ( ; ; ) {
+    if (this->GetContext()->GetApplication()->IsShuttingDown()) {
+      break;
+    }
+
+    sleep(60);
+
+    logThreadStatus();
+  }
+}
+
+void
+HeartbeatMonitor::logThreadStatus() {
   bool monitorInterfaceStatus = false;
   bool monitorGpsStatus = false;
   bool scanChannelStatus = false;
@@ -87,28 +111,6 @@ logThreadStatus(WscanContext_t *context) {
        << ", Display menu " << displayMenuStatus
        << ", Journal DB " << journalDbStatus;
 
-  syslog(context->priority, "%s", ostr.str().c_str());
-}
-
-void *
-monitorHeartbeat(void *context) {
-  WscanContext_t *wscanContext = (WscanContext_t *) context;
-  Activity_t i;
-
-  for (i = ACTIVITY_MONITOR_INTERFACE; i != ACTIVITY_LAST; i++) {
-    threadStatus[i] = false;
-  }
-
-  for ( ; ; ) {
-    if (!isMonitorInterface()) {
-      break;
-    }
-
-    sleep(60);
-
-    logThreadStatus(wscanContext);
-  }
-
-  return NULL;
+  syslog(this->GetContext()->priority, "%s", ostr.str().c_str());
 }
 

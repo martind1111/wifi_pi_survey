@@ -8,9 +8,9 @@
 #include <math.h>
 #include <time.h>
 
-#include "heartbeat.h"
+#include "HeartbeatMonitor.h"
+#include "Application.h"
 #include "manufacturer.h"
-#include "string_utils.h"
 #include "networkDiscovery.h"
 
 #define WIRELESS_DB "/var/local/wireless.db"
@@ -28,14 +28,15 @@ callback(void *data, int argc, char **argv, char **azColName) {
 }
 
 void *
-journalWirelessInformation(void *ctx) {
-  sqlite3 *db;
-  char *zErrMsg = 0;
+journalWirelessInformation(void* ctx) {
+  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(ctx);
+  sqlite3* db;
+  char* zErrMsg = 0;
   int rc;
   ostringstream sql;
   int sleepCount = 0;
 
-  /* Open database */
+  // Open database.
   rc = sqlite3_open(WIRELESS_DB, &db);
 
   if (rc) {
@@ -44,13 +45,13 @@ journalWirelessInformation(void *ctx) {
   }
 
   for ( ; ; ) {
-    if (isSurveyDone()) {
+    if (context->GetApplication()->IsShuttingDown()()) {
       break;
     }
 
     sleep(1);
 
-    reportActivity(ACTIVITY_JOURNAL_DB);
+    HeartbeatMonitor::ReportActivity(ACTIVITY_JOURNAL_DB);
 
     if (sleepCount < SLEEP_COUNT) {
       sleepCount++;

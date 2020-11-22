@@ -1,9 +1,9 @@
-#ifndef _PACKET_SUMMARY_H
-#define _PACKET_SUMMARY_H
+#ifndef _WIFI_METADATA_H
+#define _WIFI_METADATAY_H
 
 #include <stdint.h>
 
-struct PacketSummary_t {
+struct WifiMetadata {
   bool destAddrPresent;
   struct ether_addr destAddr;
   bool srcAddrPresent;
@@ -33,4 +33,4 @@ struct PacketSummary_t {
   struct timeval timestamp;
 };
 
-#endif // _PACKET_SUMMARY_H
+#endif // _WIFI_METADATA_H

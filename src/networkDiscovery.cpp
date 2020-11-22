@@ -8,51 +8,38 @@
 #include <syslog.h>
 
 #include "networkDiscovery.h"
-#include "iwconfig.h"
 #include "airodump-ng.h"
 #include "manufacturer.h"
 
-#include "PacketSummary.h"
+#include "GpsTypes.h"
+#include "WifiMetadata.h"
+#include "Application.h"
+
+using namespace std;
 
 static struct ether_addr BROADCAST_ADDRESS;
 static struct ether_addr MULTICAST_ADDRESS;
 static struct ether_addr MULTICAST_IPV6_ADDRESS;
 
-static map<string, NetworkInfo_t *> networks;
-
-static map<string, string> assignedClients;
-
-static map<string, ClientInfo_t *> unassignedClients;
-
-static pthread_mutex_t networkMutex = PTHREAD_MUTEX_INITIALIZER;
-
-static void initReservedAddresses();
-static void reportNetwork(WscanContext_t *context, struct ether_addr *bssid,
-                          PacketSummary_t *packetSummary);
-static void reportClient(WscanContext_t *context,
-                         struct ether_addr *bssid, struct ether_addr *client,
-                         PacketSummary_t *packetSummary);
-static void reportUnassignedClient(WscanContext_t *context,
-                                   struct ether_addr *client,
-                                   PacketSummary_t *packetSummary);
-static struct ether_addr *getBssid(PacketSummary_t *packetSummary);
-static int compare_ether_addr(struct ether_addr *eaddr,
-                              struct ether_addr *baseAddr, uint32_t numBytes);
-static bool isNetworkAddress(struct ether_addr *macAddr);
-static bool isClientAddress(struct ether_addr *addr);
-static bool isBroadcast(struct ether_addr *eaddr);
-static bool isMulticast(struct ether_addr *eaddr);
-static bool isIpv6Multicast(struct ether_addr *eaddr);
-static uint32_t getElapsed(time_t t);
-static bool isSecureNetwork(WscanContext_t *context, int securityMask);
-
-void
-initNetworkDiscovery() {
-  initReservedAddresses();
+namespace {
+void InitReservedAddresses();
+int compare_ether_addr(struct ether_addr* eaddr,
+                       struct ether_addr* baseAddr, uint32_t numBytes);
+bool IsBroadcast(struct ether_addr* eaddr);
+bool IsMulticast(struct ether_addr* eaddr);
+bool IsIpv6Multicast(struct ether_addr* eaddr);
+uint32_t GetElapsed(time_t t);
+void SetCurrentLocation(Location* location, ApplicationContext* context);
 }
 
-static void
-initReservedAddresses() {
+void
+NetworkDiscovery::InitNetworkDiscovery() {
+  InitReservedAddresses();
+}
+
+namespace {
+void
+InitReservedAddresses() {
   uint8_t broadcast[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
   memcpy(BROADCAST_ADDRESS.ether_addr_octet, broadcast, ETH_ALEN);
   uint8_t multicast[ETH_ALEN] =  { 0x01, 0x00, 0x5e, 0, 0, 0 };
@@ -60,59 +47,59 @@ initReservedAddresses() {
   uint8_t multicastIpv6[ETH_ALEN] = { 0x33, 0x33, 0, 0, 0, 0 };
   memcpy(MULTICAST_IPV6_ADDRESS.ether_addr_octet, multicastIpv6, ETH_ALEN);
 }
+} // namespace
 
 void
-updateNetworkResources(WscanContext_t *context,
-                       PacketSummary_t *packetSummary) {
-  struct ether_addr *bssid = getBssid(packetSummary);
+NetworkDiscovery::UpdateNetworkResources(WifiMetadata* wifiMetadata) {
+  struct ether_addr* bssid = getBssid(wifiMetadata);
 
   if (bssid != NULL) {
-    reportNetwork(context, bssid, packetSummary);
+    ReportNetwork(bssid, wifiMetadata);
 
-    if (packetSummary->srcAddrPresent &&
-        isClientAddress(&packetSummary->srcAddr)) {
-      reportClient(context, bssid, &packetSummary->srcAddr, packetSummary);
+    if (wifiMetadata->srcAddrPresent &&
+        IsClientAddress(&wifiMetadata->srcAddr)) {
+      ReportClient(bssid, &wifiMetadata->srcAddr, wifiMetadata);
     }
 
-    if (packetSummary->destAddrPresent &&
-        isClientAddress(&packetSummary->destAddr)) {
-      reportClient(context, bssid, &packetSummary->destAddr, packetSummary);
+    if (wifiMetadata->destAddrPresent &&
+        IsClientAddress(&wifiMetadata->destAddr)) {
+      ReportClient(bssid, &wifiMetadata->destAddr, wifiMetadata);
     }
 
-    if (packetSummary->raPresent && isClientAddress(&packetSummary->ra)) {
-      reportClient(context, bssid, &packetSummary->ra, packetSummary);
+    if (wifiMetadata->raPresent && IsClientAddress(&wifiMetadata->ra)) {
+      ReportClient(bssid, &wifiMetadata->ra, wifiMetadata);
     }
 
-    if (packetSummary->taPresent && isClientAddress(&packetSummary->ta)) {
-      reportClient(context, bssid, &packetSummary->ta, packetSummary);
+    if (wifiMetadata->taPresent && IsClientAddress(&wifiMetadata->ta)) {
+      ReportClient(this->context, bssid, &wifiMetadata->ta, wifiMetadata);
     }
   }
   else {
-    if (packetSummary->srcAddrPresent &&
-        isClientAddress(&packetSummary->srcAddr)) {
-      reportUnassignedClient(context, &packetSummary->srcAddr, packetSummary);
+    if (wifiMetadata->srcAddrPresent &&
+        IsClientAddress(&wifiMetadata->srcAddr)) {
+      ReportUnassignedClient(&wifiMetadata->srcAddr, wifiMetadata);
     }
 
-    if (packetSummary->destAddrPresent &&
-        isClientAddress(&packetSummary->destAddr)) {
-      reportUnassignedClient(context, &packetSummary->destAddr, packetSummary);
+    if (wifiMetadata->destAddrPresent &&
+        IsClientAddress(&wifiMetadata->destAddr)) {
+      ReportUnassignedClient(&wifiMetadata->destAddr, wifiMetadata);
     }
 
-    if (packetSummary->raPresent && isClientAddress(&packetSummary->ra)) {
-      reportUnassignedClient(context, &packetSummary->ra, packetSummary);
+    if (wifiMetadata->raPresent && IsClientAddress(&wifiMetadata->ra)) {
+      ReportUnassignedClient(&wifiMetadata->ra, wifiMetadata);
     }
 
-    if (packetSummary->taPresent && isClientAddress(&packetSummary->ta)) {
-      reportUnassignedClient(context, &packetSummary->ta, packetSummary);
+    if (wifiMetadata->taPresent && IsClientAddress(&wifiMetadata->ta)) {
+      ReportUnassignedClient(&wifiMetadata->ta, wifiMetadata);
     }
   }
 }
 
-static void
-reportNetwork(WscanContext_t *context, struct ether_addr *bssid,
-              PacketSummary_t *packetInfo) {
-  map<string, NetworkInfo_t *>::iterator iter;
-  NetworkInfo_t *networkInfo;
+void
+NetworkDiscovery::ReportNetwork(struct ether_addr* bssid,
+                                WifiMetadata* wifiMetadata) {
+  map<string, NetworkInfo_t*>::iterator iter;
+  NetworkInfo_t* networkInfo;
 
   if (isBroadcast(bssid)) {
     return;
@@ -131,27 +118,27 @@ reportNetwork(WscanContext_t *context, struct ether_addr *bssid,
   if (!found) {
     networkInfo = new NetworkInfo_t();
 
-    if (packetInfo->ssid[0] != '\0') {
-      networkInfo->ssid = packetInfo->ssid;
+    if (wifiMetadata->ssid[0] != '\0') {
+      networkInfo->ssid = wifiMetadata->ssid;
     }
 
-    networkInfo->security = packetInfo->security;
+    networkInfo->security = wifiMetadata->security;
 
     networkInfo->channel = getCurrentChannel();
 
-    networkInfo->radiotapChannel = freq2channel(packetInfo->channel);
+    networkInfo->radiotapChannel = freq2channel(wifiMetadata->channel);
 
-    networkInfo->firstSeen = packetInfo->timestamp.tv_sec;
+    networkInfo->firstSeen = wifiMetadata->timestamp.tv_sec;
 
-    networkInfo->lastSeen = packetInfo->timestamp.tv_sec;
+    networkInfo->lastSeen = wifiMetadata->timestamp.tv_sec;
 
     networkInfo->packetCount = 1;
 
-    if (packetInfo->channel != 0) {
-      networkInfo->radiotapChannel = freq2channel(packetInfo->channel);
+    if (wifiMetadata->channel != 0) {
+      networkInfo->radiotapChannel = freq2channel(wifiMetadata->channel);
     }
 
-    setCurrentLocation(&networkInfo->location);
+    SetCurrentLocation(&networkInfo->location, this->context);
 
     pthread_mutex_lock(&networkMutex);
 
@@ -168,7 +155,7 @@ reportNetwork(WscanContext_t *context, struct ether_addr *bssid,
            << ")";
     }
 
-    syslog(context->priority, ostr.str().c_str());
+    syslog(this->context->priority, ostr.str().c_str());
 
     return;
   }
@@ -178,29 +165,29 @@ reportNetwork(WscanContext_t *context, struct ether_addr *bssid,
   pthread_mutex_lock(&networkMutex);
 
   if (iter->second->ssid.empty()) {
-    ssid = string(packetInfo->ssid);
+    ssid = string(wifiMetadata->ssid);
     iter->second->ssid = ssid;
   }
 
   iter->second->channel = getCurrentChannel();
 
-  if (packetInfo->channel != 0) {
-    iter->second->radiotapChannel = freq2channel(packetInfo->channel);
+  if (wifiMetadata->channel != 0) {
+    iter->second->radiotapChannel = freq2channel(wifiMetadata->channel);
   }
 
-  if (packetInfo->security & (STD_OPN | STD_WEP | STD_WPA | STD_WPA2)) {
-    iter->second->security = packetInfo->security;
+  if (wifiMetadata->security & (STD_OPN | STD_WEP | STD_WPA | STD_WPA2)) {
+    iter->second->security = wifiMetadata->security;
   }
 
-  iter->second->lastSeen = packetInfo->timestamp.tv_sec;
+  iter->second->lastSeen = wifiMetadata->timestamp.tv_sec;
 
   iter->second->packetCount++;
 
-  if (packetInfo->channel != 0) {
-    iter->second->radiotapChannel = freq2channel(packetInfo->channel);
+  if (wifiMetadata->channel != 0) {
+    iter->second->radiotapChannel = freq2channel(wifiMetadata->channel);
   }
 
-  setCurrentLocation(&iter->second->location);
+  SetCurrentLocation(&iter->second->location);
 
   pthread_mutex_unlock(&networkMutex);
 
@@ -209,17 +196,18 @@ reportNetwork(WscanContext_t *context, struct ether_addr *bssid,
 
     ostr << "Detected SSID " << ssid << " for BSSID " << eaddr;
 
-    syslog(context->priority, ostr.str().c_str());
+    syslog(this->context->priority, ostr.str().c_str());
   }
 }
 
-static void
-reportClient(WscanContext_t *context, struct ether_addr *bssid,
-             struct ether_addr *client, PacketSummary_t *packetSummary) {
-  map<string, NetworkInfo *>::iterator iter;
+void
+NetworkDiscovery::ReportClient(struct ether_addr* bssid,
+                               struct ether_addr* client,
+                               WifiMetadata* wifiMetadata) {
+  map<string, NetworkInfo*>::iterator iter;
   string bssidStr = string(ether_ntoa(bssid));
   string clientAddr = string(ether_ntoa(client));
-  map<string, ClientInfo_t *>::iterator clientIter;
+  map<string, ClientInfo_t*>::iterator clientIter;
   bool newClient = false;
   string ssid;
 
@@ -234,27 +222,27 @@ reportClient(WscanContext_t *context, struct ether_addr *bssid,
     return;
   }
 
-  NetworkInfo_t *network = iter->second;
+  NetworkInfo_t* network = iter->second;
 
   clientIter = network->clients.find(clientAddr);
 
   if (clientIter == network->clients.end()) {
-    ClientInfo *clientInfo = new ClientInfo_t();
+    ClientInfo* clientInfo = new ClientInfo_t();
 
-    clientInfo->firstSeen = packetSummary->timestamp.tv_sec;
-    clientInfo->lastSeen = packetSummary->timestamp.tv_sec;
+    clientInfo->firstSeen = wifiMetadata->timestamp.tv_sec;
+    clientInfo->lastSeen = wifiMetadata->timestamp.tv_sec;
     clientInfo->packetCount = 1;
-    if (packetSummary->rate != 0) {
-      clientInfo->rate = packetSummary->rate;
+    if (wifiMetadata->rate != 0) {
+      clientInfo->rate = wifiMetadata->rate;
     }
-    if (packetSummary->dbmSignal != 0) {
-      clientInfo->dbmSignal = packetSummary->dbmSignal;
+    if (wifiMetadata->dbmSignal != 0) {
+      clientInfo->dbmSignal = wifiMetadata->dbmSignal;
     }
     else {
       clientInfo->dbmSignal = 0;
     }
-    if (packetSummary->dbmNoise != 0) {
-      clientInfo->dbmNoise = packetSummary->dbmNoise;
+    if (wifiMetadata->dbmNoise != 0) {
+      clientInfo->dbmNoise = wifiMetadata->dbmNoise;
     }
     else {
       clientInfo->dbmNoise = 0;
@@ -268,16 +256,16 @@ reportClient(WscanContext_t *context, struct ether_addr *bssid,
     ssid = network->ssid;
   }
   else {
-    clientIter->second->lastSeen = packetSummary->timestamp.tv_sec;
+    clientIter->second->lastSeen = wifiMetadata->timestamp.tv_sec;
     clientIter->second->packetCount++;
-    if (packetSummary->rate != 0) {
-      clientIter->second->rate = packetSummary->rate;
+    if (wifiMetadata->rate != 0) {
+      clientIter->second->rate = wifiMetadata->rate;
     }
-    if (packetSummary->dbmSignal != 0) {
-      clientIter->second->dbmSignal = packetSummary->dbmSignal;
+    if (wifiMetadata->dbmSignal != 0) {
+      clientIter->second->dbmSignal = wifiMetadata->dbmSignal;
     }
-    if (packetSummary->dbmNoise != 0) {
-      clientIter->second->dbmNoise = packetSummary->dbmNoise;
+    if (wifiMetadata->dbmNoise != 0) {
+      clientIter->second->dbmNoise = wifiMetadata->dbmNoise;
     }
   }
 
@@ -305,13 +293,13 @@ reportClient(WscanContext_t *context, struct ether_addr *bssid,
       ostr << " (SSID " << ssid << ")";
     }
 
-    syslog(context->priority, ostr.str().c_str());
+    syslog(this->context->priority, ostr.str().c_str());
   }
 }
 
-static void
-reportUnassignedClient(WscanContext_t *context, struct ether_addr *client,
-                       PacketSummary_t *packetSummary) {
+void
+NetworkDiscovery::ReportUnassignedClient(struct ether_addr* client,
+                                         WifiMetadata* wifiMetadata) {
   map<string, string>::iterator iter;
   string clientAddr = string(ether_ntoa(client));
 
@@ -320,7 +308,7 @@ reportUnassignedClient(WscanContext_t *context, struct ether_addr *client,
 
   if (iter != assignedClients.end()) {
     struct ether_addr *bssid = ether_aton(iter->second.c_str());
-    reportClient(context, bssid, client, packetSummary);
+    reportClient(this->context, bssid, client, wifiMetadata);
 
     return;
   }
@@ -332,12 +320,12 @@ reportUnassignedClient(WscanContext_t *context, struct ether_addr *client,
   if (clientIter == unassignedClients.end()) {
     ClientInfo_t *clientInfo = new ClientInfo_t();
 
-    clientInfo->lastSeen = packetSummary->timestamp.tv_sec;
+    clientInfo->lastSeen = wifiMetadata->timestamp.tv_sec;
     clientInfo->packetCount = 1;
     unassignedClients.insert(make_pair(clientAddr, clientInfo));
   }
   else {
-    clientIter->second->lastSeen = packetSummary->timestamp.tv_sec;
+    clientIter->second->lastSeen = wifiMetadata->timestamp.tv_sec;
     clientIter->second->packetCount++;
   }
 }
@@ -346,49 +334,17 @@ reportUnassignedClient(WscanContext_t *context, struct ether_addr *client,
  * Determine if the specified MAC address has been flagged as a BSSID.
  */
 static bool
-isNetworkAddress(struct ether_addr *macAddr) {
+NetworkDiscovery::IsNetworkAddress(struct ether_addr* macAddr) {
   return networks.find(ether_ntoa(macAddr)) != networks.end();
 }
 
-static int
-compare_ether_addr(struct ether_addr *eaddr, struct ether_addr *baseAddr,
-                   uint32_t numBytes) {
-  int i;
-
-  for (i = 0; i < numBytes; i++) {
-    int diff = eaddr->ether_addr_octet[i] - baseAddr->ether_addr_octet[i];
-
-    if (diff != 0) {
-      return diff;
-    }
-  }
-
-  return 0;
-}
-
 static bool
-isClientAddress(struct ether_addr *addr) {
-  return !isNetworkAddress(addr) && !isBroadcast(addr) && !isMulticast(addr);
+NetworkDiscovery::IsClientAddress(struct ether_addr* addr) {
+  return !IsNetworkAddress(addr) && !IsBroadcast(addr) && !IsMulticast(addr);
 }
 
-static bool
-isBroadcast(struct ether_addr *eaddr) {
-  return compare_ether_addr(eaddr, &BROADCAST_ADDRESS, ETH_ALEN) == 0;
-}
-
-static bool
-isMulticast(struct ether_addr *eaddr) {
-  return compare_ether_addr(eaddr, &MULTICAST_ADDRESS, 3) == 0 ||
-    isIpv6Multicast(eaddr);
-}
-
-static bool
-isIpv6Multicast(struct ether_addr *eaddr) {
-  return compare_ether_addr(eaddr, &MULTICAST_IPV6_ADDRESS, 2) == 0;
-}
-
-static struct ether_addr*
-getBssid(PacketSummary_t *packetSummary) {
+struct ether_addr*
+NetworkDiscovery::GetBssid(WifiMetadata* wifiMetadata) {
   string bssid;
   string srcAddr;
   string destAddr;
@@ -396,34 +352,34 @@ getBssid(PacketSummary_t *packetSummary) {
   string ta;
   string clientAddr;
 
-  if (packetSummary->bssidPresent && !isBroadcast(&packetSummary->bssid) &&
-      !isMulticast(&packetSummary->bssid)) {
-    return &packetSummary->bssid;
+  if (wifiMetadata->bssidPresent && !isBroadcast(&wifiMetadata->bssid) &&
+      !isMulticast(&wifiMetadata->bssid)) {
+    return &wifiMetadata->bssid;
   }
 
-  if (packetSummary->srcAddrPresent &&
-      isNetworkAddress(&packetSummary->srcAddr)) {
-    return &packetSummary->srcAddr;
+  if (wifiMetadata->srcAddrPresent &&
+      IsNetworkAddress(&wifiMetadata->srcAddr)) {
+    return &wifiMetadata->srcAddr;
   }
 
-  if (packetSummary->destAddrPresent &&
-      isNetworkAddress(&packetSummary->destAddr)) {
-    return &packetSummary->destAddr;
+  if (wifiMetadata->destAddrPresent &&
+      IsNetworkAddress(&wifiMetadata->destAddr)) {
+    return &wifiMetadata->destAddr;
   }
 
-  if (packetSummary->raPresent && isNetworkAddress(&packetSummary->ra)) {
-    return &packetSummary->ra;
+  if (wifiMetadata->raPresent && IsNetworkAddress(&wifiMetadata->ra)) {
+    return &wifiMetadata->ra;
   }
 
-  if (packetSummary->taPresent && isNetworkAddress(&packetSummary->ta)) {
-    return &packetSummary->ta;
+  if (wifiMetadata->taPresent && IsNetworkAddress(&wifiMetadata->ta)) {
+    return &wifiMetadata->ta;
   }
 
   return NULL;
 }
 
 bool
-getClient(const string& bssid, const string& clientAddr,
+NetworkDiscovery::GetClient(const string& bssid, const string& clientAddr,
           ClientInfo_t& clientInfo) {
   map<string, NetworkInfo_t *>::iterator iter;
   bool found = false;
@@ -474,17 +430,18 @@ getClient(const string& bssid, const string& clientAddr,
 }
 
 static bool
-isSecureNetwork(WscanContext_t *context, int securityMask) {
-  map<string, NetworkInfo_t *>::iterator iter;
+NetworkDiscovery::IsSecureNetwork(int securityMask) {
+  map<string, NetworkInfo_t*>::iterator iter;
   bool secureNetwork = false;
 
   pthread_mutex_lock(&networkMutex);
 
   for (iter = networks.begin(); iter != networks.end(); iter++) {
-    NetworkInfo_t *networkInfo = iter->second;
+    NetworkInfo_t* networkInfo = iter->second;
 
     if (networkInfo->security & securityMask) {
-      if (getElapsed(networkInfo->lastSeen) <= context->activityThreshold) {
+      if (GetElapsed(networkInfo->lastSeen) <=
+          this->context->activityThreshold) {
         secureNetwork = true;
      
         break;
@@ -498,22 +455,23 @@ isSecureNetwork(WscanContext_t *context, int securityMask) {
 }
 
 bool
-isOpenNetwork(WscanContext_t *context) {
-  return isSecureNetwork(context, STD_OPN);
+NetworkDiscovery::IsOpenNetwork(const ApplicationContext* context) {
+  return IsSecureNetwork(context, STD_OPN);
 }
 
 bool
-isWepNetwork(WscanContext_t *context) {
-  return isSecureNetwork(context, STD_WEP);
+NetworkDiscovery::IsWepNetwork(const ApplicationContext* context) {
+  return IsSecureNetwork(context, STD_WEP);
 }
+
 bool
-isWpaNetwork(WscanContext_t *context) {
-  return isSecureNetwork(context, STD_WPA) ||
-    isSecureNetwork(context, STD_WPA2);
+NetworkDiscovery::IsWpaNetwork(const ApplicationContext* context) {
+  return IsSecureNetwork(context, STD_WPA) ||
+    IsSecureNetwork(context, STD_WPA2);
 }
 
 void
-beginNetworkIterator(NetworkIterator_t& networkIterator) {
+NetworkDiscovery::BeginNetworkIterator(NetworkIterator_t& networkIterator) {
   pthread_mutex_lock(&networkMutex);
 
   map<string, NetworkInfo_t *>::const_iterator iter;
@@ -533,18 +491,19 @@ beginNetworkIterator(NetworkIterator_t& networkIterator) {
 }
 
 void
-endNetworkIterator(NetworkIterator_t& networkIterator) {
+NetworkDiscovery::EndNetworkIterator(NetworkIterator_t& networkIterator) {
   networkIterator.cursor = "";
   networkIterator.end = true;
 }
 
 bool
-isEndNetworkIterator(NetworkIterator_t& networkIterator) {
+NetworkDiscovery::IsEndNetworkIterator(NetworkIterator_t& networkIterator) {
   return networkIterator.end;
 }
 
 bool
-getNetworkIteratorBssid(NetworkIterator_t& networkIterator, string& bssid) {
+NetworkDiscovery::GetNetworkIteratorBssid(NetworkIterator_t& networkIterator,
+                                          string& bssid) {
   if (networkIterator.end) {
     return false;
   }
@@ -555,7 +514,7 @@ getNetworkIteratorBssid(NetworkIterator_t& networkIterator, string& bssid) {
 }
 
 void
-nextNetwork(NetworkIterator_t& networkIterator) {
+NetworkDiscovery::NextNetwork(NetworkIterator_t& networkIterator) {
   map<string, NetworkInfo_t *>::const_iterator iter;
 
   pthread_mutex_lock(&networkMutex);
@@ -579,95 +538,97 @@ nextNetwork(NetworkIterator_t& networkIterator) {
 }
 
 void
-displayNetworks(WscanContext_t *context) {
-  map<string, NetworkInfo_t *>::const_iterator iter;
-  map<string, ClientInfo_t *>::const_iterator clientIter;
+NetworkDiscovery::DisplayNetworks() {
+  map<string, NetworkInfo_t*>::const_iterator iter;
+  map<string, ClientInfo_t*>::const_iterator clientIter;
 
-  fprintf(context->out, "Networks:\n");
+  fprintf(this->context->out, "Networks:\n");
 
   for (iter = networks.begin(); iter != networks.end(); iter++) {
-    fprintf(context->out, "BSSID: %s ", iter->first.c_str());
+    fprintf(this->context->out, "BSSID: %s ", iter->first.c_str());
 
     if (!iter->second->ssid.empty()) {
-      fprintf(context->out, "SSID: %s ", iter->second->ssid.c_str());
+      fprintf(this->context->out, "SSID: %s ", iter->second->ssid.c_str());
     }
 
     if (iter->second->radiotapChannel != 0) {
-      fprintf(context->out, "channel %d ", iter->second->radiotapChannel);
+      fprintf(this->context->out, "channel %d ", iter->second->radiotapChannel);
     }
     else if (iter->second->channel != 0) {
-      fprintf(context->out, "channel %d* ", iter->second->channel);
+      fprintf(this->context->out, "channel %d* ", iter->second->channel);
     }
 
-    fprintf(context->out, "privacy %s ",
+    fprintf(this->context->out, "privacy %s ",
             getSecurityString(iter->second->security));
     double latitude = iter->second->location.latitude;
     double longitude = iter->second->location.longitude;
 
     if (!isnan(latitude)) {
-      fprintf(context->out, "latitude = %lf, ", latitude);
+      fprintf(this->context->out, "latitude = %lf, ", latitude);
     }
 
     if (!isnan(longitude)) {
-      fprintf(context->out, "longitude = %lf, ", longitude);
+      fprintf(this->context->out, "longitude = %lf, ", longitude);
     }
 
-    fprintf(context->out, "\n");
+    fprintf(this->context->out, "\n");
 
     for (clientIter = iter->second->clients.begin();
          clientIter != iter->second->clients.end(); clientIter++) {
       struct ether_addr *addr = ether_aton(clientIter->first.c_str());
       const char *manuf = getManufacturer(addr);
-      fprintf(context->out, "  %s ", clientIter->first.c_str());
+      fprintf(this->context->out, "  %s ", clientIter->first.c_str());
       if (manuf != NULL) {
-        fprintf(context->out, "%s", manuf);
+        fprintf(this->context->out, "%s", manuf);
       }
 
-      fprintf(context->out, "\n");
+      fprintf(this->context->out, "\n");
       int rate = clientIter->second->rate;
       if (rate != 0) {
-        fprintf(context->out, "    Rate (Mbps): %d\n", rate / 10);
+        fprintf(this->context->out, "    Rate (Mbps): %d\n", rate / 10);
       }
       int signal = clientIter->second->dbmSignal;
       if (signal != 0) {
-        fprintf(context->out, "    Signal (dbm): %d\n", signal);
+        fprintf(this->context->out, "    Signal (dbm): %d\n", signal);
       }
       int noise = clientIter->second->dbmNoise;
       if (noise != 0) {
-        fprintf(context->out, "    Noise (dbm): %d\n", noise);
+        fprintf(this->context->out, "    Noise (dbm): %d\n", noise);
       }
       if (clientIter->second->firstSeen != 0) {
         struct tm *brokenDownTime = gmtime(&clientIter->second->firstSeen);
-        fprintf(context->out, "    First seen: %04d-%02d-%02d %02d:%02d:%02d\n",
+        fprintf(this->context->out,
+                "    First seen: %04d-%02d-%02d %02d:%02d:%02d\n",
                 brokenDownTime->tm_year + 1900, brokenDownTime->tm_mon + 1,
                 brokenDownTime->tm_mday, brokenDownTime->tm_hour,
                 brokenDownTime->tm_min, brokenDownTime->tm_sec);
       }
       if (clientIter->second->lastSeen != 0) {
         struct tm *brokenDownTime = gmtime(&clientIter->second->lastSeen);
-        fprintf(context->out, "    Last seen: %04d-%02d-%02d %02d:%02d:%02d\n",
+        fprintf(this->context->out,
+                "    Last seen: %04d-%02d-%02d %02d:%02d:%02d\n",
                 brokenDownTime->tm_year + 1900, brokenDownTime->tm_mon + 1,
                 brokenDownTime->tm_mday, brokenDownTime->tm_hour,
                 brokenDownTime->tm_min, brokenDownTime->tm_sec);
       }
-      fprintf(context->out, "    Packets: %d\n",
+      fprintf(this->context->out, "    Packets: %d\n",
               clientIter->second->packetCount);
     }
   }
 
-  fprintf(context->out, "Unassigned clients:\n");
+  fprintf(this->context->out, "Unassigned clients:\n");
 
   for (clientIter = unassignedClients.begin();
        clientIter != unassignedClients.end(); clientIter++) {
     struct ether_addr *addr = ether_aton(clientIter->first.c_str());
     const char *manuf = getManufacturer(addr);
-    fprintf(context->out, "  %s %s\n", clientIter->first.c_str(),
+    fprintf(this->context->out, "  %s %s\n", clientIter->first.c_str(),
             manuf == NULL ? "" : manuf);
   }
 }
 
 bool
-getNetwork(const string& bssid, NetworkInfo_t& networkInfo) {
+NetworkDiscovery::GetNetwork(const string& bssid, NetworkInfo_t& networkInfo) {
   bool found = false;
 
   pthread_mutex_lock(&networkMutex);
@@ -707,7 +668,7 @@ getNetwork(const string& bssid, NetworkInfo_t& networkInfo) {
 }
 
 size_t
-getNetworkCount() {
+NetworkDiscovery::GetNetworkCount() {
   size_t networkCount;
 
   pthread_mutex_lock(&networkMutex);
@@ -720,7 +681,7 @@ getNetworkCount() {
 }
 
 void
-releaseNetworkResources() {
+NetworkDiscovery::ReleaseNetworkResources() {
   map<string, NetworkInfo_t *>::iterator iter;
   map<string, NetworkInfo_t *>::iterator del;
   map<string, ClientInfo_t *>::iterator clientIter;
@@ -770,7 +731,7 @@ releaseNetworkResources() {
 }
 
 const char *
-getBestClientSignal(const string& bssid) {
+NetworkDiscovery::GetBestClientSignal(const string& bssid) {
   map<string, NetworkInfo_t *>::iterator iter;
 
   pthread_mutex_lock(&networkMutex);
@@ -813,15 +774,15 @@ getBestClientSignal(const string& bssid) {
 }
 
 void
-getClients(const string& bssid, vector<string>& clients) {
-  map<string, NetworkInfo_t *>::const_iterator iter;
+NetworkDiscovery::GetClients(const string& bssid, vector<string>& clients) {
+  map<string, NetworkInfo_t*>::const_iterator iter;
 
   pthread_mutex_lock(&networkMutex);
 
   iter = networks.find(bssid);
 
   if (iter != networks.end()) {
-    map<string, ClientInfo_t *>::const_iterator clientIter;
+    map<string, ClientInfo_t*>::const_iterator clientIter;
 
     clients.clear();
 
@@ -834,7 +795,40 @@ getClients(const string& bssid, vector<string>& clients) {
   pthread_mutex_unlock(&networkMutex);
 }
 
-static uint32_t getElapsed(time_t t) {
+namespace {
+int
+compare_ether_addr(struct ether_addr* eaddr, struct ether_addr* baseAddr,
+                   uint32_t numBytes) {
+  int i;
+
+  for (i = 0; i < numBytes; i++) {
+    int diff = eaddr->ether_addr_octet[i] - baseAddr->ether_addr_octet[i];
+
+    if (diff != 0) {
+      return diff;
+    }
+  }
+
+  return 0;
+}
+
+bool
+IsBroadcast(struct ether_addr* eaddr) {
+  return compare_ether_addr(eaddr, &BROADCAST_ADDRESS, ETH_ALEN) == 0;
+}
+
+bool
+IsMulticast(struct ether_addr* eaddr) {
+  return compare_ether_addr(eaddr, &MULTICAST_ADDRESS, 3) == 0 ||
+    IsIpv6Multicast(eaddr);
+}
+
+bool
+IsIpv6Multicast(struct ether_addr* eaddr) {
+  return compare_ether_addr(eaddr, &MULTICAST_IPV6_ADDRESS, 2) == 0;
+}
+
+uint32_t GetElapsed(time_t t) {
   struct timeval tv;
 
   if (gettimeofday(&tv, NULL) == -1) {
@@ -846,4 +840,20 @@ static uint32_t getElapsed(time_t t) {
   }
 
   return (uint32_t) (tv.tv_sec - t);  
+}
+
+void
+SetCurrentLocation(Location* location, ApplicationContext* context) {
+  location->latitude = context->lastLocation.latitude;
+
+  location->longitude = context->lastLocation.longitude;
+
+  location->altitude = context->lastLocation.altitude;
+
+  location->epx = context->lastLocation.epx;
+
+  location->epy = context->lastLocation.epy;
+
+  location->timestamp = context->lastLocation.timestamp;
+}
 }

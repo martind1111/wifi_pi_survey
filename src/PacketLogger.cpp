@@ -1,19 +1,6 @@
+#include "PacketLogger.h"
+
 #include <stdio.h>
-#include <string>
-#include <map>
-#include <set>
-#include <list>
-#include <bits/stl_pair.h>
-#include <pcre.h>
-#include <pthread.h>
-#include <iostream>
-#include <sstream>
-#include <math.h>
-#include "gps.h"
-#include "libgpsmm.h"
-#include <sys/ioctl.h>
-#include <errno.h>
-#include <math.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/time.h>
@@ -23,29 +10,34 @@
 #include <netinet/ether.h>
 #include <syslog.h>
 
+#include <string>
+
+#include <fmt/core.h>
+
 #include "Application.h"
 #include "pkt.h"
 #include "wifi_types.h"
 #include "radiotap.h"
 #include "pdos80211.h"
-#include "iwconfig.h"
 extern "C" {
 #include "radiotap_iter.h"
 }
 #include "airodump-ng.h"
-
 #include "WifiMetadata.h"
-#include "PacketLogger.h"
+#include "Packet.h"
+#include "PacketDecoder.h"
 
 static char payload[MAX_PACKET_SIZE];
+
+using namespace std;
 
 namespace {
 void dump_payload(char* payload, size_t payload_length);
 }
 
 void
-PacketLogger::logRadiotap(uint8_t* user, WifiMetadata* wifiMetadata) {
-  WscanContext_t* context = (WscanContext_t*) user;
+PacketLogger::logRadiotap(void* user, WifiMetadata* wifiMetadata) {
+  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(user);
 
   fprintf(context->out, "(radiotap) ");
 
@@ -53,7 +45,7 @@ PacketLogger::logRadiotap(uint8_t* user, WifiMetadata* wifiMetadata) {
     fprintf(context->out, "channel %d ", wifiMetadata->channel);
 
   if (wifiMetadata->rate != 0)
-    fprintf(context->out, "rate %d ", wifiMetadata->rate, currentChannel);
+    fprintf(context->out, "rate %d ", wifiMetadata->rate);
 
   if (wifiMetadata->dbmSignal != 0)
     fprintf(context->out, "signal (dBm) %d ", wifiMetadata->dbmSignal);
@@ -69,9 +61,9 @@ PacketLogger::logRadiotap(uint8_t* user, WifiMetadata* wifiMetadata) {
 }
 
 void
-PacketLogger::log80211(const Packet* packet, uint8_t* user,
+PacketLogger::log80211(const Packet* packet, void* user,
                        WifiMetadata* wifiMetadata) {
-  WscanContext_t* context = (WscanContext_t*) user;
+  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(user);
   const uint8_t* packet_data = packet->GetData();
   const struct ieee80211_radiotap_header* radiotap_hdr =
     (const struct ieee80211_radiotap_header*) packet_data;
@@ -135,23 +127,23 @@ PacketLogger::log80211(const Packet* packet, uint8_t* user,
   fprintf(context->out, "\n");
 }
 
-/* Log Ethernet layer */
+// Log Ethernet layer
 uint16_t
-Packetlogger::logEthernet(const Packet* packet, uint8_t *user) {
+PacketLogger::logEthernet(const Packet* packet, void* user) {
   const uint8_t* packet_data = packet->GetData();
-  WscanContext_t* context = (WscanContext_t*) user;
+  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(user);
   size_t caplen =
     packet->GetCaptureLength(); // Length of portion present from BPF
   size_t length = packet->GetLength(); // Length of this packet off the wire
   const struct ether_header* eptr; // net/ethernet.h
   uint16_t ether_type; // The type of packet (we return this)
-  eptr = (const struct ether_header*) packet_data;
+  eptr = reinterpret_cast<const struct ether_header*>(packet_data);
   ether_type = ntohs(eptr->ether_type);
 
   if (caplen < 14) {
-    char errStr[80];
-    sprintf(errStr, "Packet length (%d) is less than header length", caplen);
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+    string errStr =
+      fmt::format("Packet length ({}) is less than header length", caplen);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
 
     return -1;
   }
@@ -178,43 +170,43 @@ Packetlogger::logEthernet(const Packet* packet, uint8_t *user) {
   return ether_type;
 }
 
-/* Log IP layer */
+// Log IP layer.
 void
-PacketLogger::logIp(const Packet* packet, uint8_t* user) {
+PacketLogger::logIp(const Packet* packet, void* user) {
   const uint8_t* packet_data = packet->GetData();
-  WscanContext_t* context = (WscanContext_t *) user;
+  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(user);
   const struct nread_ip* ip; // Packet structure
   const struct tcphdr* tcp; // TCP structure
   size_t length = packet->GetLength();  // Packet header length
-  u_int hlen, off, version; // Offset, version
+  size_t hlen, off, version; // Offset, version
   int len; // Length holder
 
-  ip = (const struct nread_ip*) (packet_data + sizeof(struct ether_header));
+  ip = reinterpret_cast<const struct nread_ip*>
+    (packet_data + sizeof(struct ether_header));
   length -= sizeof(struct ether_header);
-  tcp = (const struct tcphdr*)
+  tcp = reinterpret_cast<const struct tcphdr*>
     (packet_data + sizeof(struct ether_header) + sizeof(struct nread_ip));
 
-  hlen    = IP_HL(ip);         /* Get header length */
-  len     = ntohs(ip->ip_len); /* Get packet length */
-  version = IP_V(ip);          /* Get IP version    */
+  hlen = IP_HL(ip); // Get header length
+  len = ntohs(ip->ip_len); // Get packet length
+  version = IP_V(ip); // Get IP version
 
   if (hlen < 5 ) {
-    char errStr[80];
-    sprintf(errStr, "Alert: Bad header length %d", hlen);
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+    string errStr = fmt::format("Alert: Bad header length {}", hlen);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
   }
 
   if (length < len) {
-    char errStr[80];
-    sprintf(errStr, "Alert: Truncated %d bytes missing.", len - length);
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+    string errStr = fmt::format("Alert: Truncated {} bytes missing.",
+                                len - length);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
   }
 
   off = ntohs(ip->ip_off);
 
   if ((off & 0x1fff) == 0 ) { /* aka no 1's in first 13 bits */
     if (context->vflag > 3) {
-      fprintf(context->out,"ip: ");
+      fprintf(context->out, "ip: ");
     }
 
     if (context->vflag > 0) {

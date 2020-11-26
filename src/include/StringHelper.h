@@ -3,16 +3,14 @@
 
 #include <string>
 
-using namespace std;
-
 class StringHelper {
 public:
-    static string escapeSpecialCharacters(const string& value);
-    static void replaceSubstring(string* const cpstrSource,
-                                 const string& refcstrSearch,
-                                 const string& refcstrReplace);
+    static std::string EscapeSpecialCharacters(const std::string& value);
+    static void ReplaceSubstring(std::string* const cpstrSource,
+                                 const std::string& refcstrSearch,
+                                 const std::string& refcstrReplace);
 
-    string escapeHtml(const string& value);
+    static std::string EscapeHtml(const std::string& value);
 };
 
 #endif // _STRING_HELPER_H

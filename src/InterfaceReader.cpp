@@ -1,3 +1,5 @@
+#include "InterfaceReader.h"
+
 #include <stdio.h>
 #include <string>
 #include <sys/ioctl.h>
@@ -21,11 +23,9 @@ extern "C" {
 #include "radiotap_iter.h"
 }
 #include "airodump-ng.h"
-
-#include "networkDiscovery.h"
+#include "NetworkDiscovery.h"
 #include "HeartbeatMonitor.h"
 #include "WifiMetadata.h"
-#include "InterfaceReader.h"
 #include "Packet.h"
 #include "PacketDecoder.h"
 #include "PacketLogger.h"
@@ -164,12 +164,12 @@ pcap_callback(uint8_t* user, const struct pcap_pkthdr* pkthdr,
     PacketLogger::logRadiotap(user, &wifiMetadata);
     PacketLogger::log80211(&packet, user, &wifiMetadata);
 
-    updateNetworkResources(context, &wifiMetadata);
+    NetworkDiscovery* networkDiscovery = context->GetNetworkDiscovery();
+    networkDiscovery->UpdateNetworkResources(&wifiMetadata);
 
-    NetworkIterator_t* networkIterator =
-      this->GetMutableContext()->GetApplication()->GetNetworkIterator();
-    if (isEndNetworkIterator(*networkIterator) && getNetworkCount() > 0) {
-      beginNetworkIterator(*networkIterator);
+    if (networkDiscovery->IsEndNetworkIterator(context->networkIterator) &&
+        networkDiscovery->GetNetworkCount() > 0) {
+      networkDiscovery->BeginNetworkIterator(context->networkIterator);
     }
   }
 

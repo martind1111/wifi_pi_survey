@@ -1,10 +1,7 @@
+#include "GpsMonitor.h"
+
 #include <stdio.h>
-#include <string>
-#include <iostream>
-#include <list>
 #include <math.h>
-#include "gps.h"
-#include "libgpsmm.h"
 #include <errno.h>
 #include <math.h>
 #include <sys/types.h>
@@ -13,13 +10,20 @@
 #include <termios.h>
 #include <syslog.h>
 
+#include <string>
+#include <iostream>
+#include <list>
+
+#include <fmt/core.h>
+#include "gps.h"
+#include "libgpsmm.h"
+
 extern "C" {
 #include "gps_utils.h"
 }
 
 #include "HeartbeatMonitor.h"
 #include "Application.h"
-#include "GpsMonitor.h"
 
 #define DISTANCE_LOCATION_SAMPLES 10
 
@@ -191,7 +195,6 @@ GpsMonitor::ResetLocation() {
 void
 GpsMonitor::UpdateDistance(struct gps_fix_t* gps_fix) {
   struct timeval tv;
-  char debugStr[80];
 
   if (gps_fix == NULL) {
     return;
@@ -208,10 +211,10 @@ GpsMonitor::UpdateDistance(struct gps_fix_t* gps_fix) {
   }
 
   if (this->GetContext()->debugGps) { 
-    sprintf(debugStr, "GPS reading: Altitude %lf longitude %lf\n",
-            gps_fix->latitude, gps_fix->longitude);
+    string debugStr = fmt::format("GPS reading: Altitude {} longitude {}\n",
+                                  gps_fix->latitude, gps_fix->longitude);
 
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
   }
 
   Location location;
@@ -276,15 +279,17 @@ GpsMonitor::UpdateDistance(struct gps_fix_t* gps_fix) {
   }
 
   if (this->GetContext()->debugGps) {
-    sprintf(debugStr, "Last average: Altitude %lf longitude %lf\n",
-            lastDistanceLocation.latitude, lastDistanceLocation.longitude);
+    string debugStr = fmt::format("Last average: Altitude {} longitude {}\n",
+                                  lastDistanceLocation.latitude,
+                                  lastDistanceLocation.longitude);
 
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
 
-    sprintf(debugStr, "Average: Altitude %lf longitude %lf (%d)\n",
-            location.latitude, location.longitude, distanceLocations.size());
+    debugStr = fmt::format("Average: Altitude {} longitude {} ({})\n",
+                           location.latitude, location.longitude,
+                           distanceLocations.size());
 
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
   }
 
   if (!isnan(lastDistanceLocation.latitude) && !isnan(location.latitude) &&
@@ -294,11 +299,9 @@ GpsMonitor::UpdateDistance(struct gps_fix_t* gps_fix) {
                   location.latitude, location.longitude);
     if (!isnan(distance)) {
       if (this->GetContext()->debugGps) {
-        char debugStr[80];
+        string debugStr = fmt::format("Distance = {}", distance);
 
-        sprintf(debugStr, "Distance = %lf", distance);
-
-        syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr);
+        syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
       }
       if (distance > 0.010) {
         this->GetMutableContext()->totalDistance += distance;

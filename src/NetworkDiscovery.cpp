@@ -1,19 +1,24 @@
-#include <map>
-#include <bits/stl_pair.h>
+#include "NetworkDiscovery.h"
+
 #include <pthread.h>
 #include <netinet/ether.h>
 #include <math.h>
 #include <string.h>
-#include <sstream>
 #include <syslog.h>
 
-#include "networkDiscovery.h"
+#include <map>
+#include <bits/stl_pair.h>
+#include <sstream>
+
 #include "airodump-ng.h"
 #include "manufacturer.h"
-
+extern "C" {
+#include "freq.h"
+}
 #include "GpsTypes.h"
 #include "WifiMetadata.h"
 #include "Application.h"
+#include "OutputHelper.h"
 
 using namespace std;
 
@@ -51,7 +56,7 @@ InitReservedAddresses() {
 
 void
 NetworkDiscovery::UpdateNetworkResources(WifiMetadata* wifiMetadata) {
-  struct ether_addr* bssid = getBssid(wifiMetadata);
+  struct ether_addr* bssid = GetBssid(wifiMetadata);
 
   if (bssid != NULL) {
     ReportNetwork(bssid, wifiMetadata);
@@ -71,7 +76,7 @@ NetworkDiscovery::UpdateNetworkResources(WifiMetadata* wifiMetadata) {
     }
 
     if (wifiMetadata->taPresent && IsClientAddress(&wifiMetadata->ta)) {
-      ReportClient(this->context, bssid, &wifiMetadata->ta, wifiMetadata);
+      ReportClient(bssid, &wifiMetadata->ta, wifiMetadata);
     }
   }
   else {
@@ -101,7 +106,7 @@ NetworkDiscovery::ReportNetwork(struct ether_addr* bssid,
   map<string, NetworkInfo_t*>::iterator iter;
   NetworkInfo_t* networkInfo;
 
-  if (isBroadcast(bssid)) {
+  if (IsBroadcast(bssid)) {
     return;
   }
 
@@ -124,7 +129,7 @@ NetworkDiscovery::ReportNetwork(struct ether_addr* bssid,
 
     networkInfo->security = wifiMetadata->security;
 
-    networkInfo->channel = getCurrentChannel();
+    networkInfo->channel = this->context->GetCurrentChannel();
 
     networkInfo->radiotapChannel = freq2channel(wifiMetadata->channel);
 
@@ -169,7 +174,7 @@ NetworkDiscovery::ReportNetwork(struct ether_addr* bssid,
     iter->second->ssid = ssid;
   }
 
-  iter->second->channel = getCurrentChannel();
+  iter->second->channel = this->context->GetCurrentChannel();
 
   if (wifiMetadata->channel != 0) {
     iter->second->radiotapChannel = freq2channel(wifiMetadata->channel);
@@ -187,7 +192,7 @@ NetworkDiscovery::ReportNetwork(struct ether_addr* bssid,
     iter->second->radiotapChannel = freq2channel(wifiMetadata->channel);
   }
 
-  SetCurrentLocation(&iter->second->location);
+  SetCurrentLocation(&iter->second->location, this->context);
 
   pthread_mutex_unlock(&networkMutex);
 
@@ -308,7 +313,7 @@ NetworkDiscovery::ReportUnassignedClient(struct ether_addr* client,
 
   if (iter != assignedClients.end()) {
     struct ether_addr *bssid = ether_aton(iter->second.c_str());
-    reportClient(this->context, bssid, client, wifiMetadata);
+    ReportClient(bssid, client, wifiMetadata);
 
     return;
   }
@@ -333,12 +338,12 @@ NetworkDiscovery::ReportUnassignedClient(struct ether_addr* client,
 /**
  * Determine if the specified MAC address has been flagged as a BSSID.
  */
-static bool
+bool
 NetworkDiscovery::IsNetworkAddress(struct ether_addr* macAddr) {
   return networks.find(ether_ntoa(macAddr)) != networks.end();
 }
 
-static bool
+bool
 NetworkDiscovery::IsClientAddress(struct ether_addr* addr) {
   return !IsNetworkAddress(addr) && !IsBroadcast(addr) && !IsMulticast(addr);
 }
@@ -352,8 +357,8 @@ NetworkDiscovery::GetBssid(WifiMetadata* wifiMetadata) {
   string ta;
   string clientAddr;
 
-  if (wifiMetadata->bssidPresent && !isBroadcast(&wifiMetadata->bssid) &&
-      !isMulticast(&wifiMetadata->bssid)) {
+  if (wifiMetadata->bssidPresent && !IsBroadcast(&wifiMetadata->bssid) &&
+      !IsMulticast(&wifiMetadata->bssid)) {
     return &wifiMetadata->bssid;
   }
 
@@ -429,7 +434,7 @@ NetworkDiscovery::GetClient(const string& bssid, const string& clientAddr,
   return true;
 }
 
-static bool
+bool
 NetworkDiscovery::IsSecureNetwork(int securityMask) {
   map<string, NetworkInfo_t*>::iterator iter;
   bool secureNetwork = false;
@@ -455,23 +460,23 @@ NetworkDiscovery::IsSecureNetwork(int securityMask) {
 }
 
 bool
-NetworkDiscovery::IsOpenNetwork(const ApplicationContext* context) {
-  return IsSecureNetwork(context, STD_OPN);
+NetworkDiscovery::IsOpenNetwork() {
+  return IsSecureNetwork(STD_OPN);
 }
 
 bool
-NetworkDiscovery::IsWepNetwork(const ApplicationContext* context) {
-  return IsSecureNetwork(context, STD_WEP);
+NetworkDiscovery::IsWepNetwork() {
+  return IsSecureNetwork(STD_WEP);
 }
 
 bool
-NetworkDiscovery::IsWpaNetwork(const ApplicationContext* context) {
-  return IsSecureNetwork(context, STD_WPA) ||
-    IsSecureNetwork(context, STD_WPA2);
+NetworkDiscovery::IsWpaNetwork() {
+  return IsSecureNetwork(STD_WPA) ||
+    IsSecureNetwork(STD_WPA2);
 }
 
 void
-NetworkDiscovery::BeginNetworkIterator(NetworkIterator_t& networkIterator) {
+NetworkDiscovery::BeginNetworkIterator(NetworkIterator& networkIterator) {
   pthread_mutex_lock(&networkMutex);
 
   map<string, NetworkInfo_t *>::const_iterator iter;
@@ -491,18 +496,18 @@ NetworkDiscovery::BeginNetworkIterator(NetworkIterator_t& networkIterator) {
 }
 
 void
-NetworkDiscovery::EndNetworkIterator(NetworkIterator_t& networkIterator) {
+NetworkDiscovery::EndNetworkIterator(NetworkIterator& networkIterator) {
   networkIterator.cursor = "";
   networkIterator.end = true;
 }
 
 bool
-NetworkDiscovery::IsEndNetworkIterator(NetworkIterator_t& networkIterator) {
+NetworkDiscovery::IsEndNetworkIterator(NetworkIterator& networkIterator) {
   return networkIterator.end;
 }
 
 bool
-NetworkDiscovery::GetNetworkIteratorBssid(NetworkIterator_t& networkIterator,
+NetworkDiscovery::GetNetworkIteratorBssid(NetworkIterator& networkIterator,
                                           string& bssid) {
   if (networkIterator.end) {
     return false;
@@ -514,7 +519,7 @@ NetworkDiscovery::GetNetworkIteratorBssid(NetworkIterator_t& networkIterator,
 }
 
 void
-NetworkDiscovery::NextNetwork(NetworkIterator_t& networkIterator) {
+NetworkDiscovery::NextNetwork(NetworkIterator& networkIterator) {
   map<string, NetworkInfo_t *>::const_iterator iter;
 
   pthread_mutex_lock(&networkMutex);
@@ -559,7 +564,7 @@ NetworkDiscovery::DisplayNetworks() {
     }
 
     fprintf(this->context->out, "privacy %s ",
-            getSecurityString(iter->second->security));
+            OutputHelper::GetSecurityString(iter->second->security));
     double latitude = iter->second->location.latitude;
     double longitude = iter->second->location.longitude;
 

@@ -3,7 +3,7 @@
 using namespace std;
 
 void
-StringHelper::replaceSubstring(string* const cpstrSource,
+StringHelper::ReplaceSubstring(string* const cpstrSource,
                                const string& refcstrSearch,
                                const string& refcstrReplace) {
   string::size_type pos = 0;
@@ -15,20 +15,20 @@ StringHelper::replaceSubstring(string* const cpstrSource,
 }
 
 string
-StringHelper::escapeSpecialCharacters(const string& value) {
+StringHelper::EscapeSpecialCharacters(const string& value) {
   string escaped = value;
 
-  replaceSubstring(&escaped, "'", "''");
+  ReplaceSubstring(&escaped, "'", "''");
  
   return escaped;
 }
 
 string
-StringHelper::escapeHtml(const string& value) {
+StringHelper::EscapeHtml(const string& value) {
   string escaped = value;
   int i;
 
-  replaceSubstring(&escaped, "&", "&amp;");
+  ReplaceSubstring(&escaped, "&", "&amp;");
 
   // Replace all control characters with '^' followed by a letter. For instance,
   // CTRL-A (ASCII code 1) becomes "^A".

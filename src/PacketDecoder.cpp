@@ -1,19 +1,10 @@
+#include "PacketDecoder.h"
+
 #include <stdio.h>
-#include <string>
-#include <map>
-#include <set>
-#include <list>
-#include <bits/stl_pair.h>
-#include <pcre.h>
 #include <pthread.h>
-#include <iostream>
-#include <sstream>
 #include <math.h>
-#include "gps.h"
-#include "libgpsmm.h"
 #include <sys/ioctl.h>
 #include <errno.h>
-#include <math.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/time.h>
@@ -22,29 +13,27 @@
 #include <termios.h>
 #include <netinet/ether.h>
 #include <syslog.h>
-#include "wiringPiI2C.h"
+
+#include <string>
 #include <algorithm>
+
+//#include "wiringPiI2C.h"
 
 #include "Application.h"
 #include "pkt.h"
 #include "wifi_types.h"
 #include "radiotap.h"
 #include "pdos80211.h"
-#include "iwconfig.h"
 extern "C" {
 #include "create_pid_file.h"
 #include "radiotap_iter.h"
 #include "gps_utils.h"
 }
 #include "airodump-ng.h"
-#include "networkDiscovery.h"
-#include "heartbeat.h"
-#include "database.h"
+#include "Database.h"
 #include "manufacturer.h"
-
 #include "Packet.h"
 #include "WifiMetadata.h"
-#include "PacketDecoder.h"
 
 namespace {
 void DecodeRadiotap(const Packet* packet, void* user,
@@ -65,7 +54,7 @@ int DecodeProbeResp(const uint8_t* packet, size_t packetLen,
 
 void copy_ether_addr(struct ether_addr* destAddr,
                      const struct ether_addr* srcAddr);
-void updateSecurity(WifiMetadata *wifiMetadata);
+void updateSecurity(WifiMetadata *wifiMetadata, ApplicationContext* context);
 }
 
 using namespace std;
@@ -213,7 +202,7 @@ DecodeIeee80211(const Packet* packet, void* user,
 
   ParseAddresses(packet, wifiMetadata);
 
-  updateSecurity(wifiMetadata);
+  updateSecurity(wifiMetadata, context);
 
   wifiMetadata->ssid[0] = 0;
 
@@ -645,7 +634,7 @@ void copy_ether_addr(struct ether_addr *destAddr,
 }
 
 void
-updateSecurity(WifiMetadata* wifiMetadata) {
+updateSecurity(WifiMetadata* wifiMetadata, ApplicationContext* context) {
   wifiMetadata->security = 0;
 
   if (!wifiMetadata->bssidPresent) {
@@ -655,14 +644,16 @@ updateSecurity(WifiMetadata* wifiMetadata) {
   NetworkInfo_t networkInfo;
   string bssid = string(ether_ntoa(&wifiMetadata->bssid));
 
-  if (getNetwork(bssid, networkInfo)) {
+  NetworkDiscovery* networkDiscovery = context->GetNetworkDiscovery();
+
+  if (networkDiscovery->GetNetwork(bssid, networkInfo)) {
     wifiMetadata->security = networkInfo.security;
   }
 }
 } // namespace
 
 const char *
-get_ieee80211_type(const struct frame_control* control) {
+PacketDecoder::get_ieee80211_type(const struct frame_control* control) {
   switch (control->type) {
   case MGMT:
     return "Management";
@@ -680,7 +671,7 @@ get_ieee80211_type(const struct frame_control* control) {
 }
 
 const char *
-get_ieee80211_subtype(const struct frame_control* control) {
+PacketDecoder::get_ieee80211_subtype(const struct frame_control* control) {
   if (control->type == MGMT) {
     switch (control->subtype) {
     case SUBTYPE_BITFIELD(ASSOCREQ_TYPE):

@@ -5,7 +5,7 @@
 #include <sstream>
 #include <stdlib.h>
 
-#include "string_utils.h"
+#include "StringHelper.h"
 #include "airodump-ng.h"
 
 #define WIRELESS_DB "/var/local/wireless.db"
@@ -78,7 +78,7 @@ callback(void *data, int argc, char **argv, char **azColName){
 
   fprintf(f, "  <Placemark>\n");
   if (ssid != NULL && strlen(ssid) != 0) {
-    string escaped = escapeHtml(string(ssid));
+    string escaped = StringHelper::EscapeHtml(string(ssid));
     fprintf(f, "    <name>%s</name>\n", escaped.c_str());
   }
   else if (bssid != NULL && strlen(bssid) != 0) {
@@ -86,7 +86,7 @@ callback(void *data, int argc, char **argv, char **azColName){
   }
 
   if (manufacturer[0] != '\0') {
-    string escaped = escapeHtml(string(manufacturer));
+    string escaped = StringHelper::EscapeHtml(string(manufacturer));
     fprintf(f, "    <description>%s</description>\n", escaped.c_str());
   }
 

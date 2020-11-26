@@ -4,8 +4,18 @@ Project documentation: http://mdubuc.freeshell.org/WifiPiSurvey
 
 # Requirements #
 
-The following packages must be installed on the Raspberry Pi to be able to build this project:
+The fmt module must be built and installed from source.
+```
+git clone https://github.com/fmtlib/fmt.git && cd fmt
 
+mkdir _build && cd _build
+cmake ..
+
+make -j$(nproc)
+sudo make install
+```
+Once fmt is built and installed, the following packages must be installed on
+the Raspberry Pi to be able to build this project:
 ```
 sudo apt-get install cmake libsqlite3-dev libgps-dev libpcap-dev libpcre3-dev libgtest-dev wireshark
 ```
@@ -44,6 +54,7 @@ Reboot
 sudo reboot
 ```
 
+Test I2C:
 ```
 sudo i2cdetect -y 1
 
@@ -58,6 +69,7 @@ sudo i2cset -y 1 0x2a 0x00 0x01
 sudo apt-get install wiringpi
 ```
 
+To test out GPIO:
 ```
 gpio -g mode 23 out
 gpio -g write 23 1
@@ -75,13 +87,13 @@ gpio write 4 0
 Download kismet (kismet-2013-03-R1b.tar.gz)
 
 ```
-sudo apt-get install libncurses
-sudo apt-get install ncurses
-sudo apt-get install libncurses5
-sudo apt-get install libncurses-dev
-sudo apt-get install libpcap
-sudo apt-get install libpcap-dev
-sudo apt-get install libnl-dev
+sudo apt-get install libncurses \
+    curses \
+    libncurses5 \
+    libncurses-dev \
+    libpcap \
+    libpcap-dev \
+    libnl-dev
 ./configure
 sudo make install
 sudo vi /usr/local/etc/kismet.conf
@@ -118,12 +130,17 @@ To prevent system from hotplugging wlan0:
 Comment out allow-hotplug wlan0
 
 /etc/default/ifplugd:
-Change INTERFACES from auto to lis of interfaces to hotplug (eth0, lo)
+Change INTERFACES from auto to list of interfaces to hotplug (eth0, lo)
 
-Installed wscand in /etc/init.d
+# Installing wscand as a service #
 
+To install wscand as a service:
+
+```
+sudo cp wscand /etc/init.d
 sudo chmod 0755 /etc/init.d/wscand
 sudo update-rc.d wscand defaults
+```
 
 # Executing daemon #
 

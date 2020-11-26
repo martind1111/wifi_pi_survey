@@ -1,6 +1,6 @@
+#include "DisplayOutput.h"
+
 #include <stdio.h>
-#include <string>
-#include <sstream>
 #include <math.h>
 #include <sys/ioctl.h>
 #include <errno.h>
@@ -12,6 +12,12 @@
 #include <termios.h>
 #include <syslog.h>
 #include <netinet/ether.h>
+
+#include <string>
+#include <sstream>
+
+#include <fmt/core.h>
+#include <fmt/chrono.h>
 #include "wiringPiI2C.h"
 
 #include "airodump-ng.h"
@@ -20,13 +26,12 @@
 extern "C" {
 #include "create_pid_file.h"
 }
-#include "networkDiscovery.h"
-#include "database.h"
+#include "NetworkDiscovery.h"
+#include "Database.h"
 #include "manufacturer.h"
-
 #include "Application.h"
-#include "DisplayOutput.h"
 #include "HeartbeatMonitor.h"
+#include "OutputHelper.h"
 
 #define MAX_LINE_LENGTH 24
 
@@ -52,9 +57,8 @@ using namespace std;
 
 namespace {
 int WaitForKeyboardInput(unsigned int seconds);
-void GetLocationString(char *line, const double latitude,
-                       const double longitude);
-const char* GetSecurityString(uint32_t security);
+const string GetLocationString(const double latitude,
+                               const double longitude);
 const char* GetCommandString(Command_t command);
 }
 
@@ -86,18 +90,20 @@ DisplayOutput::Run() {
   lastLedWepState = false;
   lastLedWpaState = false;
 
-  NetworkIterator_t* networkIterator =
-    this->GetMutableContext()->GetApplication()->GetNetworkIterator();
-  beginNetworkIterator(*networkIterator);
+  NetworkIterator& networkIterator =
+    this->GetMutableContext()->networkIterator;
+  NetworkDiscovery* networkDiscovery =
+    this->GetMutableContext()->GetNetworkDiscovery();
+
+  networkDiscovery->BeginNetworkIterator(networkIterator);
 
   i2c_oper = IsI2cOperational();
 
   if (!i2c_oper) {
-    char errStr[256];
+    string errStr =
+      fmt::format("I2C failure: Disabling interactions with IgORE board");
 
-    sprintf(errStr, "I2C failure: Disabling interactions with IgORE board");
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
 
     if (this->GetContext()->interactive) {
       fprintf(stderr, "%s\n", errStr);
@@ -137,12 +143,13 @@ DisplayOutput::Run() {
     uint32_t networkCountSnapshot;
     string currentClientSnapshot;
 
-    networkCountSnapshot = getNetworkCount();
+    networkCountSnapshot = networkDiscovery->GetNetworkCount();
 
-    getNetworkIteratorBssid(*networkIterator, currentNetworkSnapshot);
+    networkDiscovery->GetNetworkIteratorBssid(networkIterator,
+                                              currentNetworkSnapshot);
     currentClientSnapshot = currentClient;
 
-    bool ledOpenState = isOpenNetwork(this->GetContext());
+    bool ledOpenState = networkDiscovery->IsOpenNetwork();
  
     if (ledOpenState != lastLedOpenState) {
       SetLed(REG_STATUS_LED, ledOpenState);
@@ -150,7 +157,7 @@ DisplayOutput::Run() {
 
     lastLedOpenState = ledOpenState;
 
-    bool ledWepState = isWepNetwork(this->GetContext());
+    bool ledWepState = networkDiscovery->IsWepNetwork();
  
     if (ledWepState != lastLedWepState) {
       SetLed(REG_EXT2_LED, ledWepState);
@@ -158,7 +165,7 @@ DisplayOutput::Run() {
 
     lastLedWepState = ledWepState;
 
-    bool ledWpaState = isWpaNetwork(this->GetContext());
+    bool ledWpaState = networkDiscovery->IsWpaNetwork();
  
     if (ledWpaState != lastLedWpaState) {
       SetLed(REG_EXT1_LED, ledWpaState);
@@ -176,7 +183,8 @@ DisplayOutput::Run() {
     zone6 << GetCommandString(currentCommand);
 
     NetworkInfo_t networkInfo;
-    bool networkFound = getNetwork(currentNetworkSnapshot, networkInfo);
+    bool networkFound = networkDiscovery->GetNetwork(currentNetworkSnapshot,
+                                                     networkInfo);
 
     if ((menuState == MENU_NETWORKS || menuState == MENU_NETWORK_DETAILS) &&
         !networkFound) {
@@ -190,7 +198,7 @@ DisplayOutput::Run() {
         zone1 << networkInfo.ssid;
       }
 
-      zone2 << GetSecurityString(networkInfo.security);
+      zone2 << OutputHelper::GetSecurityString(networkInfo.security);
       if (networkCountSnapshot < 100) {
           zone3 << networkCountSnapshot;
       }
@@ -200,58 +208,52 @@ DisplayOutput::Run() {
 
       if (menuState == MENU_NETWORKS) {
         zone4 << currentNetworkSnapshot;
-        const char *signalStr = getBestClientSignal(currentNetworkSnapshot);
+        const char* signalStr = 
+          networkDiscovery->GetBestClientSignal(currentNetworkSnapshot);
         if (signalStr != NULL) {
           zone5 << signalStr;
         }
       }
       else if (menuState == MENU_NETWORK_DETAILS) {
+        string timeStr;
+        string channelStr;
+        string packetStr;
+        string locationStr;
         switch(networkDetailState) {
         case DETAIL_NET_MANUFACTURER:
           {
-            struct ether_addr *addr =
+            struct ether_addr* addr =
               ether_aton(currentNetworkSnapshot.c_str());
             zone4 << getManufacturer(addr);
           }
           break;
         case DETAIL_NET_FIRST_SEEN:
           {
-            struct tm *brokenDownTime = gmtime(&networkInfo.firstSeen);
-            char timeStr[MAX_LINE_LENGTH + 1];
-            sprintf(timeStr, "F: %04d-%02d-%02d %02d:%02d:%02d",
-                    brokenDownTime->tm_year + 1900, brokenDownTime->tm_mon + 1,
-                    brokenDownTime->tm_mday, brokenDownTime->tm_hour,
-                    brokenDownTime->tm_min, brokenDownTime->tm_sec);
-            zone4 << timeStr;
+            timeStr = fmt::format("F: {:%Y-%m-%d %H:%M:%S}",
+                                  fmt::localtime(networkInfo.firstSeen));
+            zone4 << timeStr.substr(0, MAX_LINE_LENGTH);
           }
           break;
         case DETAIL_NET_LAST_SEEN:
           {
-            struct tm *brokenDownTime = gmtime(&networkInfo.lastSeen);
-            char timeStr[MAX_LINE_LENGTH + 1];
-            sprintf(timeStr, "L: %04d-%02d-%02d %02d:%02d:%02d",
-                    brokenDownTime->tm_year + 1900, brokenDownTime->tm_mon + 1,
-                    brokenDownTime->tm_mday, brokenDownTime->tm_hour,
-                    brokenDownTime->tm_min, brokenDownTime->tm_sec);
-            zone4 << timeStr;
+            timeStr = fmt::format("L: {:%Y-%m-%d %H:%M:%S}",
+                                  fmt::localtime(networkInfo.lastSeen));
+            zone4 << timeStr.substr(0, MAX_LINE_LENGTH);
           }
           break;
         case DETAIL_NET_CHANNEL:
-          char channelStr[MAX_LINE_LENGTH + 1];
-          sprintf(channelStr, "Channel: %-3d", networkInfo.channel);
-          zone4 << channelStr;
+          channelStr = fmt::format("Channel: {:<3d}", networkInfo.channel);
+          zone4 << channelStr.substr(0, MAX_LINE_LENGTH);
           break;
         case DETAIL_NET_PACKET_COUNT:
-          char packetStr[MAX_LINE_LENGTH + 1];
-          sprintf(packetStr, "Packets: %-10d",
-                  networkInfo.packetCount);
-          zone4 << packetStr;
+          packetStr =
+            fmt::format("Packets: {<10d}", networkInfo.packetCount);
+          zone4 << packetStr.substr(0, MAX_LINE_LENGTH);
           break;
         case DETAIL_NET_LOCATION:
-          char locationStr[MAX_LINE_LENGTH + 1];
-          GetLocationString(locationStr, networkInfo.location.latitude,
-                            networkInfo.location.longitude);
-          zone4 << locationStr;
+          locationStr = GetLocationString(networkInfo.location.latitude,
+                                          networkInfo.location.longitude);
+          zone4 << locationStr.substr(0, MAX_LINE_LENGTH);
           break;
         case DETAIL_NET_CLIENTS:
           if (currentClientSnapshot.empty()) {
@@ -269,9 +271,12 @@ DisplayOutput::Run() {
       zone1 << currentClientSnapshot.c_str();
 
       ClientInfo_t client;
-      bool clientFound = getClient(currentNetworkSnapshot,
-                                   currentClientSnapshot, client);
+      bool clientFound = networkDiscovery->GetClient(currentNetworkSnapshot,
+                                                     currentClientSnapshot,
+                                                     client);
 
+      string timeStr;
+      string packetStr;
       switch(clientDetailState) {
       case DETAIL_CLIENT_MANUFACTURER:
         {
@@ -282,30 +287,21 @@ DisplayOutput::Run() {
         break;
       case DETAIL_CLIENT_FIRST_SEEN:
         {
-          struct tm *brokenDownTime = gmtime(&client.firstSeen);
-          char timeStr[MAX_LINE_LENGTH + 1];
-          sprintf(timeStr, "F: %04d-%02d-%02d %02d:%02d:%02d",
-                  brokenDownTime->tm_year + 1900, brokenDownTime->tm_mon + 1,
-                  brokenDownTime->tm_mday, brokenDownTime->tm_hour,
-                  brokenDownTime->tm_min, brokenDownTime->tm_sec);
-          zone4 << timeStr;
+          timeStr = fmt::format("F: {:%Y-%m-%d %H:%M:%s}",
+                                fmt::localtime(client.firstSeen));
+          zone4 << timeStr.substr(0, MAX_LINE_LENGTH);
         }
         break;
       case DETAIL_CLIENT_LAST_SEEN:
         {
-          struct tm *brokenDownTime = gmtime(&client.lastSeen);
-          char timeStr[MAX_LINE_LENGTH + 1];
-          sprintf(timeStr, "L: %04d-%02d-%02d %02d:%02d:%02d",
-                  brokenDownTime->tm_year + 1900, brokenDownTime->tm_mon + 1,
-                  brokenDownTime->tm_mday, brokenDownTime->tm_hour,
-                  brokenDownTime->tm_min, brokenDownTime->tm_sec);
-          zone4 << timeStr;
+          timeStr = fmt::format("L: {:%Y-%m-%d %H:%M:%S}",
+                                fmt::localtime(client.lastSeen));
+          zone4 << timeStr.substr(0, MAX_LINE_LENGTH);
         }
         break;
       case DETAIL_CLIENT_PACKET_COUNT:
-        char packetStr[MAX_LINE_LENGTH + 1];
-        sprintf(packetStr, "Packets: %-10d", client.packetCount);
-        zone4 << packetStr;
+        packetStr = fmt::format("Packets: {:<10d}", client.packetCount);
+        zone4 << packetStr.substr(0, MAX_LINE_LENGTH);
         break;
       case DETAIL_CLIENT_SIGNAL_NOISE:
         if (client.dbmSignal != 0) {
@@ -326,13 +322,12 @@ DisplayOutput::Run() {
       latitude = this->GetContext()->lastLocation.latitude;
       longitude = this->GetContext()->lastLocation.longitude;
 
-      char locationStr[MAX_LINE_LENGTH + 1];
-      GetLocationString(locationStr, latitude, longitude);
-      zone1 << locationStr;
+      const string& locationStr = GetLocationString(latitude, longitude);
+      zone1 << locationStr.substr(0, MAX_LINE_LENGTH);
 
-      char distanceStr[MAX_LINE_LENGTH + 1];
-      sprintf(distanceStr, "Distance: %.3f", this->GetContext()->totalDistance);
-      zone4 << distanceStr;
+      string distanceStr =
+        fmt::format("Distance: {:.3f}", this->GetContext()->totalDistance);
+      zone4 << distanceStr.substr(0, MAX_LINE_LENGTH);
     }
 
     if (zone2.str().compare(lastZone2.str()) != 0) {
@@ -550,10 +545,11 @@ DisplayOutput::GetButton() {
   int regValue = wiringPiI2CReadReg8(i2c_fd, REG_BUTTON);
 
   if (regValue == -1) {
-    sprintf(errStr, "Error reading register 0x%02X from I2C slave device "
-            "0x%02X", REG_BUTTON, DEVICE_ADDRESS);
+    string errStr =
+      fmt::format("Error reading register 0x{:02X} from I2C slave device "
+                  "0x{:02X}", REG_BUTTON, DEVICE_ADDRESS);
 
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
 
     return 0;
   }
@@ -561,10 +557,11 @@ DisplayOutput::GetButton() {
   int status = wiringPiI2CWriteReg8(i2c_fd, REG_BUTTON, 0);
 
   if (status == -1) {
-    sprintf(errStr, "Error writing register 0x%02X on I2C slave device "
-            "0x%02X", REG_BUTTON, DEVICE_ADDRESS);
+    string errStr =
+      fmt::format("Error writing register 0x{:02X} on I2C slave device "
+                  "0x{:02X)", REG_BUTTON, DEVICE_ADDRESS);
 
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
 
     return 0;
   }
@@ -581,12 +578,11 @@ DisplayOutput::SetLed(int reg, bool state) {
   int status = wiringPiI2CWriteReg8(i2c_fd, reg, state);
 
   if (status == -1) {
-    char errStr[80];
+    string errStr = 
+      fmt::format("Failed writing to register 0x{:02X} on I2C slave device "
+                  "0x{:02X}", REG_STATUS_LED, DEVICE_ADDRESS);
 
-    sprintf(errStr, "Failed writing to register 0x%02X on I2C slave device "
-            "0x%02X", REG_STATUS_LED, DEVICE_ADDRESS);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
   }
 }
 
@@ -614,23 +610,20 @@ DisplayOutput::IsLcdReset() {
   int regValue = wiringPiI2CReadReg8(i2c_fd, REG_LCD_RESET);
 
   if (regValue == -1) {
-    char errStr[80];
+    string errStr =
+      fmt::format("Error reading register 0x{:02X} from I2C slave device "
+                  "0x{:02X}", REG_LCD_RESET, DEVICE_ADDRESS);
 
-    sprintf(errStr, "Error reading register 0x%02X from I2C slave device "
-            "0x%02X", REG_LCD_RESET, DEVICE_ADDRESS);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
 
     return false;
   }
 
   if (regValue != 0) {
     if (this->GetContext()->debugLcdDisplay) {
-      char debugStr[80];
+      string debugStr = fmt::format("LCD Display: Detected reset");
 
-      sprintf(debugStr, "LCD Display: Detected reset");
-
-      syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr);
+      syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
     }
 
     return true;
@@ -648,22 +641,19 @@ DisplayOutput::ClearLcdReset() {
   int status = wiringPiI2CWriteReg8(i2c_fd, REG_LCD_RESET, 0x00);
 
   if (status == -1) {
-    char errStr[80];
+    string errStr =
+      fmt::format("Error writing register 0x{:02X} on I2C slave device "
+                  "0x{:02X}", REG_LCD_RESET, DEVICE_ADDRESS);
 
-    sprintf(errStr, "Error writing register 0x%02X on I2C slave device "
-            "0x%02X", REG_LCD_RESET, DEVICE_ADDRESS);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
 
     return;
   }
 
   if (this->GetContext()->debugLcdDisplay) {
-    char debugStr[80];
+    string debugStr = fmt::format("LCD Display: Clear");
 
-    sprintf(debugStr, "LCD Display: Clear");
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
   }
 }
 
@@ -674,25 +664,23 @@ DisplayOutput::LcdMoveCursor(int row, int column) {
   }
 
   if (this->GetContext()->debugLcdDisplay) {
-    char debugStr[80];
+    string debugStr =
+      fmt::format("LCD Display: Move cursor to row {}, column {}", row,
+                  column);
 
-    sprintf(debugStr, "LCD Display: Move cursor to row %d, column %d", row,
-            column);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
   }
 
-  char cmd[64];
+  string cmd =
+    fmt::format("sudo i2cset -y 1 0{:02x} 0x{:02x} 0x{:02x} 0x{:02x} 0x00 i",
+                DEVICE_ADDRESS, REG_LCD + 1, row, column);
 
-  sprintf(cmd, "sudo i2cset -y 1 0x%02x 0x%02x 0x%02x 0x%02x 0x00 i",
-          DEVICE_ADDRESS, REG_LCD + 1, row, column);
+  system(cmd.c_str());
 
-  system(cmd);
+  cmd = fmt::format("sudo i2cset -y 1 0x{:02x} 0x{:02x} 0x{:02x} i",
+                    DEVICE_ADDRESS, REG_LCD, LCD_MOVE_CURSOR);
 
-  sprintf(cmd, "sudo i2cset -y 1 0x%02x 0x%02x 0x%02x i",
-          DEVICE_ADDRESS, REG_LCD, LCD_MOVE_CURSOR);
-
-  system(cmd);
+  system(cmd.c_str());
 }
 
 void
@@ -702,15 +690,13 @@ DisplayOutput::OutputLcd(const char* line, bool lineFeed) {
   }
 
   if (this->GetContext()->debugLcdDisplay) {
-    char debugStr[80];
+    string debugStr = fmt::format("LCD Display: Output '{}'", line);
 
-    snprintf(debugStr, 80, "LCD Display: Output '%s'", line);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr);
+    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.substr(0, 80).c_str());
   }
 
-  char cmd[512];
-  char str[8];
+  ostringstream cmd;
+  string str;
   int len = strlen(line);
   int i;
 
@@ -718,20 +704,21 @@ DisplayOutput::OutputLcd(const char* line, bool lineFeed) {
     len = LCD_SIZE - 1;
   }
 
-  sprintf(cmd, "sudo i2cset -y 1 0x%02x 0x%02x ", DEVICE_ADDRESS, REG_LCD);
+  cmd << fmt::format("sudo i2cset -y 1 0x{:02x} 0x{:02x} ", DEVICE_ADDRESS,
+                     REG_LCD);
 
   for (i = 0; i < len; i++) {
-    sprintf(str, "0x%02x ", line[i]);
-    strcat(cmd, str);
+    str = fmt::format("0x{:02x} ", line[i]);
+    cmd << str;
   }
 
   if (lineFeed) {
-    strcat(cmd, "0x0a ");
+    cmd << "0x0a ";
   }
 
-  strcat(cmd, "0x00 i");
+  cmd << "0x00 i";
 
-  system(cmd);
+  system(cmd.str().c_str());
 }
 
 void
@@ -795,13 +782,16 @@ DisplayOutput::ChooseNextCommand() {
 
 void
 DisplayOutput::ChooseNextNetwork() {
-  NetworkIterator_t* networkIterator =
-    this->GetMutableContext()->GetApplication()->GetNetworkIterator();
-  if (isEndNetworkIterator(*networkIterator)) {
+  NetworkIterator& networkIterator =
+    this->GetMutableContext()->networkIterator;
+  NetworkDiscovery* networkDiscovery =
+    this->GetMutableContext()->GetNetworkDiscovery();
+
+  if (networkDiscovery->IsEndNetworkIterator(networkIterator)) {
     return;
   }
 
-  nextNetwork(*networkIterator);
+  networkDiscovery->NextNetwork(networkIterator);
 
   ApplyFilter();
 }
@@ -814,23 +804,25 @@ DisplayOutput::ChooseNextNetwork() {
 void
 DisplayOutput::ApplyFilter() {
   string currentBssid;
+  NetworkDiscovery* networkDiscovery =
+    this->GetMutableContext()->GetNetworkDiscovery();
+  NetworkIterator& networkIterator =
+    this->GetMutableContext()->networkIterator;
 
-  NetworkIterator_t* networkIterator =
-    this->GetMutableContext()->GetApplication()->GetNetworkIterator();
-  getNetworkIteratorBssid(*networkIterator, currentBssid);
+  networkDiscovery->GetNetworkIteratorBssid(networkIterator, currentBssid);
 
-  for ( ; !isEndNetworkIterator(networkIterator);
-       nextNetwork(*networkIterator)) {
+  for ( ; !networkDiscovery->IsEndNetworkIterator(networkIterator);
+       networkDiscovery->NextNetwork(networkIterator)) {
     if (!filter) {
       break;
     }
     else {
       string bssid;
 
-      if (getNetworkIteratorBssid(*networkIterator, bssid)) {
+      if (networkDiscovery->GetNetworkIteratorBssid(networkIterator, bssid)) {
         NetworkInfo_t networkInfo;
 
-        if (getNetwork(bssid, networkInfo)) {
+        if (networkDiscovery->GetNetwork(bssid, networkInfo)) {
           if (networkInfo.security & STD_OPN) {
             break;
           }
@@ -839,21 +831,22 @@ DisplayOutput::ApplyFilter() {
     }
   }
 
-  if (!isEndNetworkIterator(*networkIterator)) {
+  if (!networkDiscovery->IsEndNetworkIterator(networkIterator)) {
     return;
   }
 
-  for (beginNetworkIterator(*networkIterator);
-       !isEndNetworkIterator(*networkIterator); nextNetwork(*networkIterator)) {
+  for (networkDiscovery->BeginNetworkIterator(networkIterator);
+       !networkDiscovery->IsEndNetworkIterator(networkIterator);
+       networkDiscovery->NextNetwork(networkIterator)) {
     string bssid;
 
-    if (!getNetworkIteratorBssid(*networkIterator, bssid)) {
-      endNetworkIterator(*networkIterator);
+    if (!networkDiscovery->GetNetworkIteratorBssid(networkIterator, bssid)) {
+      networkDiscovery->EndNetworkIterator(networkIterator);
       break;
     }
 
     if (bssid.compare(currentBssid) == 0) {
-      endNetworkIterator(*networkIterator);
+      networkDiscovery->EndNetworkIterator(networkIterator);
       break;
     }
 
@@ -863,7 +856,7 @@ DisplayOutput::ApplyFilter() {
     else {
       NetworkInfo_t networkInfo;
 
-      if (getNetwork(bssid, networkInfo)) {
+      if (networkDiscovery->GetNetwork(bssid, networkInfo)) {
         if (networkInfo.security & STD_OPN) {
           break;
         }
@@ -876,16 +869,18 @@ bool
 DisplayOutput::ChooseNextClient() {
   string bssid;
   int i;
+  NetworkIterator& networkIterator =
+    this->GetMutableContext()->networkIterator;
+  NetworkDiscovery* networkDiscovery =
+    this->GetMutableContext()->GetNetworkDiscovery();
 
-  NetworkIterator_t* networkIterator =
-    this->GetMutableContext()->GetApplication()->GetNetworkIterator();
-  if (!getNetworkIteratorBssid(*networkIterator, bssid)) {
+  if (!networkDiscovery->GetNetworkIteratorBssid(networkIterator, bssid)) {
     return false;
   }
 
   vector<string> clients;
 
-  getClients(bssid, clients);
+  networkDiscovery->GetClients(bssid, clients);
 
   if (currentClient.empty()) {
     // If there is no client defined, return the first client in the list
@@ -966,11 +961,14 @@ DisplayOutput::ChooseNextNetworkDetail() {
 
 void
 DisplayOutput::ResetNetworks() {
-  releaseNetworkResources();
+  NetworkIterator& networkIterator =
+    this->GetMutableContext()->networkIterator;
+  NetworkDiscovery* networkDiscovery =
+    this->GetMutableContext()->GetNetworkDiscovery();
 
-  NetworkIterator_t* networkIterator =
-    this->GetMutableContext()->GetApplication()->GetNetworkIterator();
-  beginNetworkIterator(*networkIterator);
+  networkDiscovery->ReleaseNetworkResources();
+
+  networkDiscovery->BeginNetworkIterator(networkIterator);
 
   currentClient = "";
 }
@@ -1000,41 +998,23 @@ WaitForKeyboardInput(unsigned int seconds) {
                             &timeout));
 }
 
-void
-GetLocationString(char* line, const double latitude, const double longitude) {
-  char str[MAX_LINE_LENGTH + 2];
+const string
+GetLocationString(const double latitude, const double longitude) {
+  ostringstream str;
   if (!isnan(latitude)) {
-    sprintf(line, "%2.6lf ", latitude);
+    str << fmt::format("{:2.6f} ", latitude);
   }
   else {
-    sprintf(line, "-- ");
+    str << "-- ";
   }
   if (!isnan(longitude)) {
-    sprintf(str, "%2.6lf", longitude);
-    strcat(line, str);
+    str << fmt::format("{:2.6f}", longitude);
   }
   else {
-    sprintf(str, "--");
-    strcat(line, str);
-  }
-}
-
-const char*
-GetSecurityString(uint32_t security) {
-  if (security & STD_OPN) {
-    return "OPEN";
-  }
-  else if (security & STD_WEP) {
-    return "WEP ";
-  }
-  else if (security & STD_WPA) {
-    return "WPA ";
-  }
-  else if (security & STD_WPA2) {
-    return "WPA2";
+    str << "--";
   }
 
-  return "UNKN";
+  return str.str();
 }
 
 const char*

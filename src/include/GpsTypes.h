@@ -1,6 +1,8 @@
 #ifndef _GPS_TYPES_H
 #define _GPS_TYPES_H
 
+#include "gps.h"
+
 struct Location {
   double latitude;
   double longitude;

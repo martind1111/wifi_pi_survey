@@ -6,11 +6,11 @@
 
 #include "GpsTypes.h"
 #include "HeartbeatTypes.h"
+#include "NetworkDiscovery.h"
 
 class HeartbeatMonitor;
 class GpsMonitor;
-class NetworkDiscovery;
-struct NetworkIterator_t;
+class ChannelScanner;
 
 class Application {
 public:
@@ -21,44 +21,51 @@ public:
 
 class ApplicationContext {
 public:
-  ApplicationContext(Application* app) : application(app), opmode(0),
-    heartbeatMonitor(nullptr), gpsMonitor(nullptr) { }
-  Application* GetApplication() const { return application; }
-  void ReportActivity(const Activity_t activity);
-  void ResetLocation();
-  void SetHeartbeatMonitor(HeartbeatMonitor* monitor) {
-    heartbeatMonitor = monitor;
-  }
-  void SetGpsMonitor(GpsMonitor* monitor) { gpsMonitor = monitor; }
-  void SetNetworkDiscovery(NetworkDiscovery* netDiscovery) {
-      networkDiscovery = netDiscovery;
-  }
-  NetworkIterator_t* GetNetworkIterator();
+    ApplicationContext(Application* app) : application(app), opmode(0),
+        heartbeatMonitor(nullptr), gpsMonitor(nullptr),
+        networkDiscovery(nullptr), channelScanner(nullptr) { }
+    Application* GetApplication() const { return application; }
+    void ReportActivity(const Activity_t activity);
+    void ResetLocation();
+    void SetHeartbeatMonitor(HeartbeatMonitor* monitor) {
+        heartbeatMonitor = monitor;
+    }
+    void SetGpsMonitor(GpsMonitor* monitor) { gpsMonitor = monitor; }
+    void SetNetworkDiscovery(NetworkDiscovery* netDiscovery) {
+        networkDiscovery = netDiscovery;
+    }
+    NetworkDiscovery* GetNetworkDiscovery() { return networkDiscovery; }
+    void SetChannelScanner(ChannelScanner* scanner) {
+        channelScanner = scanner;
+    }
+    int GetCurrentChannel();
 
-  int datalink;
-  char* dev;
-  uint32_t npkts;
-  char* oper; /* Filter or Operation */
-  short int vflag; /* Verbosity flag   */
-  short int eflag; /* Ethernet flag */
-  FILE* out;
-  pcap_t* descr;
-  FILE* outPcap;
-  pcap_dumper_t* dumper;
-  bool interactive;
-  int priority;
-  Location lastLocation;
-  double totalDistance;
-  bool debugLcdDisplay;
-  bool debugGps;
-  uint32_t activityThreshold;
-  int opmode;
+    int datalink;
+    char* dev;
+    uint32_t npkts;
+    char* oper; // Filter or Operation
+    short int vflag; // Verbosity flag
+    short int eflag; // Ethernet flag
+    FILE* out;
+    pcap_t* descr;
+    FILE* outPcap;
+    pcap_dumper_t* dumper;
+    bool interactive;
+    int priority;
+    Location lastLocation;
+    double totalDistance;
+    bool debugLcdDisplay;
+    bool debugGps;
+    uint32_t activityThreshold;
+    int opmode;
+    NetworkIterator networkIterator;
 
 private:
-  Application* application;
-  HeartbeatMonitor* heartbeatMonitor;
-  GpsMonitor* gpsMonitor;
-  NetworkDiscovery* networkDiscovery;
+    Application* application;
+    HeartbeatMonitor* heartbeatMonitor;
+    GpsMonitor* gpsMonitor;
+    NetworkDiscovery* networkDiscovery;
+    ChannelScanner* channelScanner;
 };
 
 #endif // _APPLICATION_H

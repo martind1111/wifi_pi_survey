@@ -1,5 +1,6 @@
+#include "Application.h"
+
 #include <stdio.h>
-#include <cstring>
 #include <pthread.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -7,16 +8,16 @@
 #include <getopt.h>
 #include <syslog.h>
 
+#include <cstring>
+
 extern "C" {
 #include "create_pid_file.h"
 }
-#include "networkDiscovery.h"
-#include "database.h"
-
-#include "Application.h"
+#include "NetworkDiscovery.h"
+#include "Database.h"
 #include "InterfaceReader.h"
 #include "GpsMonitor.h"
-#include "ChannelMonitor.h"
+#include "ChannelScanner.h"
 #include "HeartbeatMonitor.h"
 #include "DisplayOutput.h"
 
@@ -49,6 +50,16 @@ ApplicationContext::ResetLocation() {
   }
 }
 
+int
+ApplicationContext::GetCurrentChannel() {
+  if (channelScanner) {
+    // Delegate to ChannelScanner instance.
+    return channelScanner->GetCurrentChannel();
+  }
+
+  return 0;
+}
+
 bool
 Application::IsShuttingDown() const {
   bool d;
@@ -75,11 +86,6 @@ Application::LogError(int opmode, const char* module,
   fprintf(stderr, "%s: %s\n", module, message);
 }
 
-NetworkIterator_t*
-Application::GetNetworkIterator() {
-    return networkDiscovery->GetNetworkIteartor();
-}
-
 namespace {
 /*
  * copy_argv - Copy the rest of an argument string into a new buffer for
@@ -88,7 +94,7 @@ namespace {
 char*
 copy_argv(char** argv) {
   char** p;
-  u_int len = 0;
+  size_t len = 0;
   char* buf;
   char* src;
   char* dst;
@@ -206,7 +212,7 @@ int
 main(int argc, char** argv) {
   Application application;
   ApplicationContext context(&application);
-  NetworkDiscovery networkDiscovery;
+  NetworkDiscovery networkDiscovery(&context);
   pthread_t gpsThreadId;
   pthread_t interfaceThreadId;
   pthread_t displayThreadId;
@@ -218,9 +224,7 @@ main(int argc, char** argv) {
 
   parseArguments(argc, argv, &context);
 
-  initNetworkDiscovery();
-
-  application.SetNetworkDiscovery(&networkDiscovery);
+  context.SetNetworkDiscovery(&networkDiscovery);
 
   if (getuid()) {
     fprintf(stderr, "Error! Must be root... Exiting\n");
@@ -235,7 +239,7 @@ main(int argc, char** argv) {
 
   pthread_create(&scanChannelsThreadId, NULL, ScanChannels, &context);
 
-  pthread_create(&journalWirelessInfoThreadId, NULL, journalWirelessInformation,
+  pthread_create(&journalWirelessInfoThreadId, NULL, JournalWirelessInformation,
                  &context);
 
   pthread_create(&heartbeatThreadId, NULL, MonitorHeartbeat, &context);
@@ -252,9 +256,9 @@ main(int argc, char** argv) {
 
   pthread_join(heartbeatThreadId, NULL);
 
-  displayNetworks(&context);
+  networkDiscovery.DisplayNetworks();
 
-  releaseNetworkResources();
+  networkDiscovery.ReleaseNetworkResources();
 
   return 0;
 }

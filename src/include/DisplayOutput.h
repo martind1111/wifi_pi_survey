@@ -1,6 +1,8 @@
 #ifndef _DISPLAY_OUTPUT_H
 #define _DISPLAY_OUTPUT_H
 
+#include <string>
+
 #include "Worker.h"
 
 class ApplicationContext;

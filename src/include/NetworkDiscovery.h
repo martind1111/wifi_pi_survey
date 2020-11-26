@@ -39,10 +39,10 @@ typedef struct NetworkInfo {
   Location location;
 } NetworkInfo_t;
 
-typedef struct NetworkIterator {
+struct NetworkIterator {
   std::string cursor;
   bool end;
-} NetworkIterator_t;
+};
 
 class NetworkDiscovery {
 public:
@@ -51,10 +51,10 @@ public:
 
     void UpdateNetworkResources(WifiMetadata* wifiMetadata);
 
-    void BeginNetworkIterator(NetworkIterator_t& networkIterator);
-    void EndNetworkIterator(NetworkIterator_t& networkIterator);
-    bool IsEndNetworkIterator(NetworkIterator_t& networkIterator);
-    bool GetNetworkIteratorBssid(NetworkIterator_t& networkIterator,
+    void BeginNetworkIterator(NetworkIterator& networkIterator);
+    void EndNetworkIterator(NetworkIterator& networkIterator);
+    bool IsEndNetworkIterator(NetworkIterator& networkIterator);
+    bool GetNetworkIteratorBssid(NetworkIterator& networkIterator,
                                  std::string& bssid);
     void NextNetwork(NetworkIterator& networkIterator);
 
@@ -62,11 +62,11 @@ public:
     bool IsNetworkAddress(struct ether_addr* macAddr);
     bool IsClientAddress(struct ether_addr* addr);
     bool IsSecureNetwork(int securityMask);
-    bool IsOpenNetwork(const ApplicationContext* context);
-    bool IsWepNetwork(const ApplicationContext* context);
-    bool IsWpaNetwork(const ApplicationContext* context);
+    bool IsOpenNetwork();
+    bool IsWepNetwork();
+    bool IsWpaNetwork();
 
-    void DisplayNetworks(ApplicationContext* context);
+    void DisplayNetworks();
 
     bool GetNetwork(const std::string& bssid, NetworkInfo_t& networkInfo);
     bool GetClient(const std::string& bssid, const std::string& clientAddr,
@@ -90,11 +90,11 @@ private:
 
     ApplicationContext* context;
 
-    NetworkIterator_t networkIterator;
+    NetworkIterator networkIterator;
 
     std::map<std::string, NetworkInfo_t*> networks;
 
-    std::map<std::string, string> assignedClients;
+    std::map<std::string, std::string> assignedClients;
 
     std::map<std::string, ClientInfo_t*> unassignedClients;
 

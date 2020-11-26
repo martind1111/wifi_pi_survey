@@ -1,17 +1,20 @@
+#include "Database.h"
+
 #include <stdio.h>
 #include <sqlite3.h>
 #include <unistd.h>
-#include <sstream>
-#include <map>
-#include <algorithm>
 #include <netinet/ether.h>
 #include <math.h>
 #include <time.h>
 
+#include <sstream>
+#include <algorithm>
+
 #include "HeartbeatMonitor.h"
 #include "Application.h"
 #include "manufacturer.h"
-#include "networkDiscovery.h"
+#include "NetworkDiscovery.h"
+#include "StringHelper.h"
 
 #define WIRELESS_DB "/var/local/wireless.db"
 
@@ -19,17 +22,22 @@
 
 using namespace std;
 
-static int callback(void *data, int argc, char **argv, char **azColName);
-static string getSqlite3Timestamp(const time_t timestamp);
-
-static int
-callback(void *data, int argc, char **argv, char **azColName) {
-  return 0;
+namespace {
+int Callback(void* data, int argc, char** argv, char** azColName);
+string GetSqlite3Timestamp(const time_t timestamp);
 }
 
-void *
-journalWirelessInformation(void* ctx) {
-  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(ctx);
+void*
+JournalWirelessInformation(void* ctx) {
+    Database database(reinterpret_cast<ApplicationContext*>(ctx));
+
+    database.Run();
+
+    return nullptr;
+}
+
+void
+Database::Run() {
   sqlite3* db;
   char* zErrMsg = 0;
   int rc;
@@ -41,17 +49,17 @@ journalWirelessInformation(void* ctx) {
 
   if (rc) {
     fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
-    return NULL;
+    return;
   }
 
   for ( ; ; ) {
-    if (context->GetApplication()->IsShuttingDown()()) {
+    if (this->GetContext()->GetApplication()->IsShuttingDown()) {
       break;
     }
 
     sleep(1);
 
-    HeartbeatMonitor::ReportActivity(ACTIVITY_JOURNAL_DB);
+    this->GetMutableContext()->ReportActivity(ACTIVITY_JOURNAL_DB);
 
     if (sleepCount < SLEEP_COUNT) {
       sleepCount++;
@@ -60,20 +68,23 @@ journalWirelessInformation(void* ctx) {
 
     sleepCount = 0;
 
-    NetworkIterator_t networkIterator;
+    NetworkIterator networkIterator;
+    NetworkDiscovery* networkDiscovery =
+      this->GetMutableContext()->GetNetworkDiscovery();
 
-    for (beginNetworkIterator(networkIterator);
-         !isEndNetworkIterator(networkIterator); nextNetwork(networkIterator)) {
+    for (networkDiscovery->BeginNetworkIterator(networkIterator);
+         !networkDiscovery->IsEndNetworkIterator(networkIterator);
+         networkDiscovery->NextNetwork(networkIterator)) {
       NetworkInfo_t networkInfo;
       string bssid;
 
-      getNetworkIteratorBssid(networkIterator, bssid);
+      networkDiscovery->GetNetworkIteratorBssid(networkIterator, bssid);
 
-      if (!getNetwork(bssid, networkInfo)) {
+      if (!networkDiscovery->GetNetwork(bssid, networkInfo)) {
         continue;
       }
 
-      /* Create INSERT SQL statement */
+      // Create INSERT SQL statement.
       sql.str("");
 
       double latitude = 0.0;
@@ -92,13 +103,13 @@ journalWirelessInformation(void* ctx) {
         altitude = networkInfo.location.altitude;
       }
 
-      string firstSeen = getSqlite3Timestamp(networkInfo.firstSeen);
-      string lastSeen = getSqlite3Timestamp(networkInfo.lastSeen);
-      const char *manufacturer =
+      string firstSeen = GetSqlite3Timestamp(networkInfo.firstSeen);
+      string lastSeen = GetSqlite3Timestamp(networkInfo.lastSeen);
+      const char* manufacturer =
         getManufacturer(ether_aton(bssid.c_str()));
       string manufacturerStr;
 
-      if (manufacturer == NULL) {
+      if (manufacturer == nullptr) {
         manufacturerStr = "";
       }
       else {
@@ -109,7 +120,7 @@ journalWirelessInformation(void* ctx) {
           << "security, channel, firstSeen, lastSeen, packetCount, latitude, "
           << "longitude, altitude) VALUES ('" << bssid
           << "', '" << manufacturerStr
-          << "', '" << escapeSpecialCharacters(networkInfo.ssid)
+          << "', '" << StringHelper::EscapeSpecialCharacters(networkInfo.ssid)
           << "', " << networkInfo.security
           << ", " << networkInfo.radiotapChannel
           << ", '" << firstSeen
@@ -119,8 +130,8 @@ journalWirelessInformation(void* ctx) {
           << ", " << longitude
           << ", " << altitude << ")";
 
-      /* Execute SQL statement */
-      rc = sqlite3_exec(db, sql.str().c_str(), callback, NULL,
+      // Execute SQL statement.
+      rc = sqlite3_exec(db, sql.str().c_str(), Callback, NULL,
                         &zErrMsg);
 
       if (rc != SQLITE_OK) {
@@ -131,7 +142,7 @@ journalWirelessInformation(void* ctx) {
       }
 
       vector<string> clients;
-      getClients(bssid, clients);
+      networkDiscovery->GetClients(bssid, clients);
       vector<string>::const_iterator clientIter;
 
       for (clientIter = clients.begin(); clientIter != clients.end();
@@ -139,7 +150,7 @@ journalWirelessInformation(void* ctx) {
         /* Create INSERT SQL statement */
         ClientInfo_t clientInfo;
 
-        if (!getClient(bssid, *clientIter, clientInfo)) {
+        if (!networkDiscovery->GetClient(bssid, *clientIter, clientInfo)) {
           continue;
         }
 
@@ -161,13 +172,13 @@ journalWirelessInformation(void* ctx) {
           altitude = clientInfo.location.altitude;
         }
 
-        string firstSeen = getSqlite3Timestamp(clientInfo.firstSeen);
-        string lastSeen = getSqlite3Timestamp(clientInfo.lastSeen);
-        const char *manufacturer =
+        string firstSeen = GetSqlite3Timestamp(clientInfo.firstSeen);
+        string lastSeen = GetSqlite3Timestamp(clientInfo.lastSeen);
+        const char* manufacturer =
           getManufacturer(ether_aton(clientIter->c_str()));
         string manufacturerStr;
 
-        if (manufacturer == NULL) {
+        if (manufacturer == nullptr) {
           manufacturerStr = "";
         }
         else {
@@ -188,8 +199,8 @@ journalWirelessInformation(void* ctx) {
             << ", " << longitude
             << ", " << altitude << ")";
 
-        /* Execute SQL statement */
-        rc = sqlite3_exec(db, sql.str().c_str(), callback, NULL,
+        // Execute SQL statement.
+        rc = sqlite3_exec(db, sql.str().c_str(), Callback, NULL,
                           &zErrMsg);
 
         if (rc != SQLITE_OK) {
@@ -204,16 +215,20 @@ journalWirelessInformation(void* ctx) {
   }
 
   sqlite3_close(db);
-
-  return NULL;
 }
 
-static string
-getSqlite3Timestamp(const time_t timestamp) {
+namespace {
+int
+Callback(void* data, int argc, char** argv, char** azColName) {
+  return 0;
+}
+
+string
+GetSqlite3Timestamp(const time_t timestamp) {
   char timeStr[32];
   struct tm brokenDownTime;
 
-  struct tm *result = gmtime_r(&timestamp, &brokenDownTime);
+  struct tm* result = gmtime_r(&timestamp, &brokenDownTime);
 
   if (result == NULL) {
     sprintf(timeStr, "%lu", timestamp);
@@ -229,3 +244,4 @@ getSqlite3Timestamp(const time_t timestamp) {
 
   return string(timeStr);
 }
+} // namespace

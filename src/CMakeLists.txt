@@ -1,4 +1,4 @@
-set(BINARY wscan)
+set(BINARY wscand)
 
 file(GLOB_RECURSE SOURCES LIST_DIRECTORIES true *.h *.c *.cpp)
 list(REMOVE_ITEM SOURCES ${CMAKE_SOURCE_DIR}/src/exportKml.cpp)

@@ -27,24 +27,31 @@ mkdir build
 cd build
 cmake ..
 make
+sudo make install
 ```
 
 # Enabling I2C #
 
-```
-sudo vi /etc/modules
-```
+To enable I2C, follow instructions on this page:
+https://www.raspberrypi-spy.co.uk/2014/11/enabling-the-i2c-interface-on-the-raspberry-pi/
 
-Add these lines:
-i2c-bcm2708
-i2c-dev
-
+Or execute the following program:
 ```
-sudo vi /etc/modprobe.d/raspi-blacklist.conf
+sudo raspi-config
 ```
 
-Comment blacklist i2c-bcm2708
+Select Interface Options menu
 
+Select I2C menu
+
+Enable I2C
+
+Reboot
+```
+sudo reboot
+```
+
+Install utilities:
 ```
 sudo apt-get install python-smbus i2c-tools
 ```
@@ -55,9 +62,14 @@ sudo reboot
 ```
 
 Test I2C:
+
+To see where sensor is connected:
 ```
 sudo i2cdetect -y 1
+```
 
+To retrieve and change register value:
+```
 sudo i2cget -y 1 0x2a 0x00
 
 sudo i2cset -y 1 0x2a 0x00 0x01
@@ -82,7 +94,7 @@ gpio write 4 1
 gpio write 4 0
 ```
 
-# Running kismet #
+# Installing and configuring kismet #
 
 Download kismet (kismet-2013-03-R1b.tar.gz)
 
@@ -97,9 +109,27 @@ sudo apt-get install libncurses \
 ./configure
 sudo make install
 sudo vi /usr/local/etc/kismet.conf
-
-lsusb
 ```
+
+Install manuf file from wireshark distribution to /etc/manuf
+
+/var/log/kismet
+
+# Enabling GPS #
+
+Modify /etc/default/gpsd to get gpsd loaded at startup:
+START_DAEMON="true"
+GPSD_OPTIONS="/dev/ttyUSB0"
+
+# Configuring Wifi interface #
+
+To prevent system from hotplugging wlan0:
+
+/etc/network/interfaces:
+Comment out allow-hotplug wlan0
+
+/etc/default/ifplugd:
+Change INTERFACES from auto to list of interfaces to hotplug (eth0, lo)
 
 Kill ifplugd used to manage wlan0 interface
 ```
@@ -110,27 +140,9 @@ sudo ifconfig wlan0 down
 sudo iwconfig wlan0 mode monitor
 ```
 
-Install manuf file from wireshark distribution to /etc/manuf
-
-/var/log/kismet
-
 Edit:
 /etc/default/ifplugd
 /etc/network/interfaces
-
-# System configuration #
-
-Modified /etc/default/gpsd to get gpsd loaded at startup:
-START_DAEMON="true"
-GPSD_OPTIONS="/dev/ttyUSB0"
-
-To prevent system from hotplugging wlan0:
-
-/etc/network/interfaces:
-Comment out allow-hotplug wlan0
-
-/etc/default/ifplugd:
-Change INTERFACES from auto to list of interfaces to hotplug (eth0, lo)
 
 # Installing wscand as a service #
 
@@ -149,3 +161,22 @@ How to launch the Wifi Pi survey daemon on the Rapsberry Pi:
 ```
 sudo ./wscand -i wlan0 -e -v 4 -p 100000 -o wscan.log
 ```
+
+# Troubleshooting system #
+
+To list USB devices plugged-in on the Raspberry Pi:
+```
+lsusb
+```
+
+To verify if I2C module is loaded:
+```
+lsmod | grep i2c_
+```
+Module i2c_bcm2708 should appear in this list.
+
+To see where the I2C module is connected to (Model A, B Rev 2 or B+):
+```
+i2cdetect -y 1
+```
+Use 0 instead of 1 for Model B Rev 1.

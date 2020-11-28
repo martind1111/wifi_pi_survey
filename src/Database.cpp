@@ -10,9 +10,12 @@
 #include <sstream>
 #include <algorithm>
 
+#include <fmt/core.h>
+#include <fmt/chrono.h>
+
 #include "HeartbeatMonitor.h"
 #include "Application.h"
-#include "manufacturer.h"
+#include "HardwareHelper.h"
 #include "NetworkDiscovery.h"
 #include "StringHelper.h"
 
@@ -23,8 +26,8 @@
 using namespace std;
 
 namespace {
+void Init();
 int Callback(void* data, int argc, char** argv, char** azColName);
-string GetSqlite3Timestamp(const time_t timestamp);
 }
 
 void*
@@ -43,6 +46,8 @@ Database::Run() {
   int rc;
   ostringstream sql;
   int sleepCount = 0;
+
+  Init();
 
   // Open database.
   rc = sqlite3_open(WIRELESS_DB, &db);
@@ -103,10 +108,12 @@ Database::Run() {
         altitude = networkInfo.location.altitude;
       }
 
-      string firstSeen = GetSqlite3Timestamp(networkInfo.firstSeen);
-      string lastSeen = GetSqlite3Timestamp(networkInfo.lastSeen);
+      string firstSeen = fmt::format("{:%Y-%m-%d %H:%M:%S}",
+                                     fmt::localtime(networkInfo.firstSeen));
+      string lastSeen = fmt::format("{:%Y-%m-%d %H:%M:%S}",
+                                    fmt::localtime(networkInfo.lastSeen));
       const char* manufacturer =
-        getManufacturer(ether_aton(bssid.c_str()));
+        HardwareHelper::GetManufacturer(ether_aton(bssid.c_str()));
       string manufacturerStr;
 
       if (manufacturer == nullptr) {
@@ -172,10 +179,12 @@ Database::Run() {
           altitude = clientInfo.location.altitude;
         }
 
-        string firstSeen = GetSqlite3Timestamp(clientInfo.firstSeen);
-        string lastSeen = GetSqlite3Timestamp(clientInfo.lastSeen);
+        string firstSeen = fmt::format("{:%Y-%m-%d %H:%M:%S}",
+                                       fmt::localtime(clientInfo.firstSeen));
+        string lastSeen = fmt::format("{:%Y-%m-%d %H:%M:%S}",
+                                      fmt::localtime(clientInfo.lastSeen));
         const char* manufacturer =
-          getManufacturer(ether_aton(clientIter->c_str()));
+          HardwareHelper::GetManufacturer(ether_aton(clientIter->c_str()));
         string manufacturerStr;
 
         if (manufacturer == nullptr) {
@@ -185,10 +194,11 @@ Database::Run() {
           manufacturerStr = string(manufacturer);
         }
 
-        sql << "INSERT OR REPLACE INTO client (bssid, manufacturer, "
-            << "rate, dbmSignal, dbmNoise, firstSeen, lastSeen, packetCount, "
-            << "latitude, longitude, altitude) VALUES ('" << bssid
-            << "', '" << manufacturerStr
+        sql << "INSERT OR REPLACE INTO client (macAddress, manufacturer, "
+               "bssid, ssid, rate, dbmSignal, dbmNoise, firstSeen, lastSeen, "
+               "packetCount, latitude, longitude, altitude) VALUES ('" 
+            << *clientIter << "', '" << manufacturerStr << "', '" << bssid
+            << "', '" << networkInfo.ssid
             << "', " << clientInfo.rate
             << ", " << ((int32_t) clientInfo.dbmSignal)
             << ", " << ((int32_t) clientInfo.dbmNoise)
@@ -218,30 +228,76 @@ Database::Run() {
 }
 
 namespace {
+void Init() {
+  sqlite3* db;
+  char* zErrMsg = 0;
+  int rc;
+  ostringstream sql;
+
+  // Open database.
+  rc = sqlite3_open(WIRELESS_DB, &db);
+
+  if (rc) {
+    fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+    return;
+  }
+
+  sql << "CREATE TABLE IF NOT EXISTS network ("
+      << "bssid TEXT, "
+      << "manufacturer TEXT, "
+      << "ssid TEXT KEY, "
+      << "security INTEGER DEFAULT 0, "
+      << "channel INTEGER DEFAULT 0, "
+      << "firstSeen TEXT, "
+      << "lastSeen TEXT, "
+      << "packetCount INTEGER DEFAULT 0, "
+      << "latitude REAL DEFAULT 0, "
+      << "longitude REAL DEFAULT 0, "
+      << "altitude REAL DEFAULT 0, "
+      << "PRIMARY KEY (bssid, ssid))";
+
+  // Execute SQL statement.
+  rc = sqlite3_exec(db, sql.str().c_str(), Callback, NULL,
+                    &zErrMsg);
+
+  if (rc != SQLITE_OK) {
+    fprintf(stderr, "SQL statement %s\nSQL error: %s\n",
+            sql.str().c_str(), zErrMsg);
+    sqlite3_free(zErrMsg);
+  }
+
+  sql.str("");
+  sql << "CREATE TABLE IF NOT EXISTS client ("
+      << "macAddress TEXT, "
+      << "manufacturer TEXT, "
+      << "bssid TEXT, "
+      << "ssid TEXT, "
+      << "rate INTEGER DEFAULT 0, "
+      << "dbmSignal INTEGER DEFAULT 0, "
+      << "dbmNoise INTEGER DEFAULT 0, "
+      << "firstSeen TEXT, "
+      << "lastSeen TEXT, "
+      << "packetCount INTEGER DEFAULT 0, "
+      << "latitude REAL DEFAULT 0, "
+      << "longitude REAL DEFAULT 0, "
+      << "altitude REAL DEFAULT 0, "
+      << "PRIMARY KEY (macAddress))";
+
+  // Execute SQL statement.
+  rc = sqlite3_exec(db, sql.str().c_str(), Callback, NULL,
+                    &zErrMsg);
+
+  if (rc != SQLITE_OK) {
+    fprintf(stderr, "SQL statement %s\nSQL error: %s\n",
+            sql.str().c_str(), zErrMsg);
+    sqlite3_free(zErrMsg);
+  }
+
+  sqlite3_close(db);
+}
+
 int
 Callback(void* data, int argc, char** argv, char** azColName) {
   return 0;
-}
-
-string
-GetSqlite3Timestamp(const time_t timestamp) {
-  char timeStr[32];
-  struct tm brokenDownTime;
-
-  struct tm* result = gmtime_r(&timestamp, &brokenDownTime);
-
-  if (result == NULL) {
-    sprintf(timeStr, "%lu", timestamp);
-
-    return string(timeStr);
-  }
-
-  sprintf(timeStr, "%04d-%02d-%02d %02d:%02d:%02d",
-         1900 + brokenDownTime.tm_year,
-          brokenDownTime.tm_mon + 1, brokenDownTime.tm_mday, 
-          brokenDownTime.tm_hour, brokenDownTime.tm_min,
-          brokenDownTime.tm_sec);
-
-  return string(timeStr);
 }
 } // namespace

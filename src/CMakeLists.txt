@@ -5,7 +5,7 @@ list(REMOVE_ITEM SOURCES ${CMAKE_SOURCE_DIR}/src/exportKml.cpp)
 
 set(SOURCES ${SOURCES})
 
-set(PROJECT_LINK_LIBS pcap pcre gps sqlite3 wiringPi fmt)
+set(PROJECT_LINK_LIBS pcap pcre gps sqlite3 wiringPi fmt pthread)
 
 add_executable(${BINARY} ${SOURCES})
 

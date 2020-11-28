@@ -28,7 +28,7 @@ extern "C" {
 }
 #include "NetworkDiscovery.h"
 #include "Database.h"
-#include "manufacturer.h"
+#include "HardwareHelper.h"
 #include "Application.h"
 #include "HeartbeatMonitor.h"
 #include "OutputHelper.h"
@@ -224,7 +224,7 @@ DisplayOutput::Run() {
           {
             struct ether_addr* addr =
               ether_aton(currentNetworkSnapshot.c_str());
-            zone4 << getManufacturer(addr);
+            zone4 << HardwareHelper::GetManufacturer(addr);
           }
           break;
         case DETAIL_NET_FIRST_SEEN:
@@ -282,7 +282,7 @@ DisplayOutput::Run() {
         {
           struct ether_addr *addr =
             ether_aton(currentClientSnapshot.c_str());
-          zone4 << getManufacturer(addr);
+          zone4 << HardwareHelper::GetManufacturer(addr);
         }
         break;
       case DETAIL_CLIENT_FIRST_SEEN:

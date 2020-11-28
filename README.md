@@ -17,7 +17,7 @@ sudo make install
 Once fmt is built and installed, the following packages must be installed on
 the Raspberry Pi to be able to build this project:
 ```
-sudo apt-get install cmake libsqlite3-dev libgps-dev libpcap-dev libpcre3-dev libgtest-dev wireshark
+sudo apt-get install cmake sqlite3 libsqlite3-dev gpsd libgps-dev libpcap-dev libpcre3-dev libgtest-dev wireshark
 ```
 
 # Build instructions #
@@ -35,7 +35,8 @@ sudo make install
 To enable I2C, follow instructions on this page:
 https://www.raspberrypi-spy.co.uk/2014/11/enabling-the-i2c-interface-on-the-raspberry-pi/
 
-Or execute the following program:
+Here is a summary of the instructions on that page. Run raspi-config to enable
+I2C interface:
 ```
 sudo raspi-config
 ```
@@ -61,12 +62,19 @@ Reboot
 sudo reboot
 ```
 
+To verify if I2C module is loaded:
+```
+lsmod | grep i2c_
+```
+Module i2c_bcm2708 should appear in this list.
+
 Test I2C:
 
-To see where sensor is connected:
+To see where sensor is connected (Model A, B Rev 2 or B+):
 ```
 sudo i2cdetect -y 1
 ```
+Use 0 instead of 1 for Model B Rev 1.
 
 To retrieve and change register value:
 ```
@@ -94,55 +102,40 @@ gpio write 4 1
 gpio write 4 0
 ```
 
-# Installing and configuring kismet #
-
-Download kismet (kismet-2013-03-R1b.tar.gz)
-
-```
-sudo apt-get install libncurses \
-    curses \
-    libncurses5 \
-    libncurses-dev \
-    libpcap \
-    libpcap-dev \
-    libnl-dev
-./configure
-sudo make install
-sudo vi /usr/local/etc/kismet.conf
-```
-
-Install manuf file from wireshark distribution to /etc/manuf
-
-/var/log/kismet
-
 # Enabling GPS #
 
-Modify /etc/default/gpsd to get gpsd loaded at startup:
-START_DAEMON="true"
-GPSD_OPTIONS="/dev/ttyUSB0"
+Enable the gpsd service:
+```
+sudo systemctl enable gpsd
+sudo systemctl start gpsd
+```
+
+To verify that GPS daemon is running and producing output:
+```
+stty -F /dev/ttyXXX ispeed 4800 && cat </dev/ttyXXX
+```
+Where XXX is likely to be USB0 (check that the GPS device is listed with lsusb
+command).
+
 
 # Configuring Wifi interface #
 
-To prevent system from hotplugging wlan0:
-
-/etc/network/interfaces:
-Comment out allow-hotplug wlan0
-
-/etc/default/ifplugd:
-Change INTERFACES from auto to list of interfaces to hotplug (eth0, lo)
-
-Kill ifplugd used to manage wlan0 interface
+to bring wlan0 interface in monitor mode at startup, create file
+/etc/network/interfaces.d/wlan0 with the following content:
 ```
-ps alwwx | grep ifplugd
+#/etc/network/interfaces.d/wlan0
+auto wlan0
+iface wlan0 inet manual
+  wireless-mode monitor
+```
 
-
+To manually set the wlan0 interface to monitor mode, issue the following
+commands:
+```
 sudo ifconfig wlan0 down
 sudo iwconfig wlan0 mode monitor
+sudo ifconfig wlan0 up
 ```
-
-Edit:
-/etc/default/ifplugd
-/etc/network/interfaces
 
 # Installing wscand as a service #
 
@@ -159,24 +152,22 @@ sudo update-rc.d wscand defaults
 How to launch the Wifi Pi survey daemon on the Rapsberry Pi:
 
 ```
-sudo ./wscand -i wlan0 -e -v 4 -p 100000 -o wscan.log
+sudo ./wscand -i wlan0 -e -v 4 -p 100000 -o wscand.log
 ```
 
-# Troubleshooting system #
+# Installing and configuring kismet #
 
-To list USB devices plugged-in on the Raspberry Pi:
-```
-lsusb
-```
+Download kismet (kismet-2013-03-R1b.tar.gz)
 
-To verify if I2C module is loaded:
 ```
-lsmod | grep i2c_
+sudo apt-get install libncurses \
+    curses \
+    libncurses5 \
+    libncurses-dev \
+    libpcap \
+    libpcap-dev \
+    libnl-dev
+./configure
+sudo make install
+sudo vi /usr/local/etc/kismet.conf
 ```
-Module i2c_bcm2708 should appear in this list.
-
-To see where the I2C module is connected to (Model A, B Rev 2 or B+):
-```
-i2cdetect -y 1
-```
-Use 0 instead of 1 for Model B Rev 1.

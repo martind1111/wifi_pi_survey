@@ -11,7 +11,7 @@
 #include <sstream>
 
 #include "airodump-ng.h"
-#include "manufacturer.h"
+#include "HardwareHelper.h"
 extern "C" {
 #include "freq.h"
 }
@@ -581,7 +581,7 @@ NetworkDiscovery::DisplayNetworks() {
     for (clientIter = iter->second->clients.begin();
          clientIter != iter->second->clients.end(); clientIter++) {
       struct ether_addr *addr = ether_aton(clientIter->first.c_str());
-      const char *manuf = getManufacturer(addr);
+      const char *manuf = HardwareHelper::GetManufacturer(addr);
       fprintf(this->context->out, "  %s ", clientIter->first.c_str());
       if (manuf != NULL) {
         fprintf(this->context->out, "%s", manuf);
@@ -626,7 +626,7 @@ NetworkDiscovery::DisplayNetworks() {
   for (clientIter = unassignedClients.begin();
        clientIter != unassignedClients.end(); clientIter++) {
     struct ether_addr *addr = ether_aton(clientIter->first.c_str());
-    const char *manuf = getManufacturer(addr);
+    const char *manuf = HardwareHelper::GetManufacturer(addr);
     fprintf(this->context->out, "  %s %s\n", clientIter->first.c_str(),
             manuf == NULL ? "" : manuf);
   }

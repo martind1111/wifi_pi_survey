@@ -31,7 +31,7 @@ static bool done = false;
 
 namespace {
 char *copy_argv(char** argv);
-void parseArguments(int argc, char* argv[], ApplicationContext* context);
+void ParseArguments(int argc, char* argv[], ApplicationContext* context);
 }
 
 void
@@ -126,7 +126,7 @@ copy_argv(char** argv) {
 }
 
 void
-parseArguments(int argc, char* argv[], ApplicationContext* context) {
+ParseArguments(int argc, char* argv[], ApplicationContext* context) {
   context->dev = NULL;
   context->eflag = 0;
   context->interactive = false;
@@ -207,6 +207,7 @@ parseArguments(int argc, char* argv[], ApplicationContext* context) {
 
   context->oper = copy_argv(argv);
 }
+} // namespace
 
 int
 main(int argc, char** argv) {
@@ -222,7 +223,7 @@ main(int argc, char** argv) {
 
   createPidFile("wscand", "/var/run/wscand.pid", CPF_CLOEXEC);
 
-  parseArguments(argc, argv, &context);
+  ParseArguments(argc, argv, &context);
 
   context.SetNetworkDiscovery(&networkDiscovery);
 
@@ -256,10 +257,11 @@ main(int argc, char** argv) {
 
   pthread_join(heartbeatThreadId, NULL);
 
+  fprintf(stdout, "Shutting down...\n");
+
   networkDiscovery.DisplayNetworks();
 
   networkDiscovery.ReleaseNetworkResources();
 
   return 0;
 }
-} // namespace

@@ -1,14 +1,15 @@
+#include "HardwareHelper.h"
+
 #include <stdio.h>
-#include <string>
-#include <map>
-#include <set>
 #include <pcre.h>
-#include <iostream>
-#include <sstream>
 #include <string.h>
 #include <netinet/ether.h>
 
-#include "manufacturer.h"
+#include <string>
+#include <map>
+#include <fmt/core.h>
+#include <iostream>
+#include <sstream>
 
 #define OVECCOUNT 30
 
@@ -17,19 +18,22 @@ using namespace std;
 static bool loaded = false;
 static map<string, string> manufacturers;
 
-static void loadManuf();
+namespace {
+void LoadManufacturers();
+}
 
 const char* MANUFACTURER_PATH = "/usr/share/wireshark/manuf";
 
-static void
-loadManuf() {
-  FILE *f;
+namespace {
+void
+LoadManufacturers() {
+  FILE* f;
   size_t len = 0;
-  char *line;
-  const char *error;
+  char* line;
+  const char* error;
   int erroroffset;
   int ovector[OVECCOUNT];
-  pcre *re;
+  pcre* re;
   int rc;
   string oui;
   string manufacturer;
@@ -71,7 +75,7 @@ loadManuf() {
     rc = pcre_exec(re,
                    NULL,
                    line,
-                   (int) strlen(line),
+                   static_cast<int>(strlen(line)),
                    0,
                    0,
                    ovector,
@@ -93,18 +97,19 @@ loadManuf() {
 
   free(line);
 }
+} // namespace
 
 const char *
-getManufacturer(struct ether_addr *addr) {
-  char oui[16];
+HardwareHelper::GetManufacturer(struct ether_addr* addr) {
   map<string, string>::const_iterator iter;
 
   if (!loaded) {
-    loadManuf();
+    LoadManufacturers();
   }
 
-  sprintf(oui, "%02X:%02X:%02X", addr->ether_addr_octet[0],
-          addr->ether_addr_octet[1], addr->ether_addr_octet[2]);
+  string oui = fmt::format("{:02X}:{:02X}:{:02X}", addr->ether_addr_octet[0],
+                           addr->ether_addr_octet[1],
+                           addr->ether_addr_octet[2]);
 
   iter = manufacturers.find(oui);
 
@@ -112,6 +117,6 @@ getManufacturer(struct ether_addr *addr) {
     return iter->second.c_str();
   }
 
-  return NULL;
+  return nullptr;
 }
 

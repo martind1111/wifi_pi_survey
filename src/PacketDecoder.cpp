@@ -31,7 +31,6 @@ extern "C" {
 }
 #include "airodump-ng.h"
 #include "Database.h"
-#include "manufacturer.h"
 #include "Packet.h"
 #include "WifiMetadata.h"
 
@@ -54,7 +53,7 @@ int DecodeProbeResp(const uint8_t* packet, size_t packetLen,
 
 void copy_ether_addr(struct ether_addr* destAddr,
                      const struct ether_addr* srcAddr);
-void updateSecurity(WifiMetadata *wifiMetadata, ApplicationContext* context);
+void UpdateSecurity(WifiMetadata *wifiMetadata, ApplicationContext* context);
 }
 
 using namespace std;
@@ -202,7 +201,7 @@ DecodeIeee80211(const Packet* packet, void* user,
 
   ParseAddresses(packet, wifiMetadata);
 
-  updateSecurity(wifiMetadata, context);
+  UpdateSecurity(wifiMetadata, context);
 
   wifiMetadata->ssid[0] = 0;
 
@@ -226,12 +225,16 @@ ParseAddresses(const Packet* packet,
   size_t caplen =
     packet->GetCaptureLength(); // Length of portion present from BPF
   size_t length = packet->GetLength(); // Length of this packet off the wire
-  struct ieee80211_radiotap_header *radiotap_hdr =
-    (struct ieee80211_radiotap_header*) packet->GetData();
+  const struct ieee80211_radiotap_header* radiotap_hdr =
+    reinterpret_cast<const struct ieee80211_radiotap_header*>(
+      packet->GetData());
   size_t radiotap_len = radiotap_hdr->it_len;
 
-  const struct mac_header* p = (struct mac_header*) (packet + radiotap_len);
-  const struct frame_control* control = (struct frame_control*) p->fc;
+  const struct mac_header* p =
+    reinterpret_cast<const struct mac_header*>(
+      packet->GetData() + radiotap_len);
+  const struct frame_control* control =
+    reinterpret_cast<const struct frame_control*>(p->fc);
 
   // Extract MAC address
   wifiMetadata->bssidPresent = false;
@@ -502,8 +505,8 @@ DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
   int i;
   char tmp;
 
-  mgmthdr = (const struct mgmt_hdr*) packet_data;
-  body = (const uint8_t*) packet_data + MGMT_HDR_LEN;
+  mgmthdr = reinterpret_cast<const struct mgmt_hdr*>(packet_data);
+  body = reinterpret_cast<const uint8_t*>(packet_data + MGMT_HDR_LEN);
 
   if ((body + FIELD_TS_LEN + FIELD_BI_LEN + FIELD_CAP_LEN) >
       (packet_data + packetLen)) {
@@ -529,7 +532,7 @@ DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
   size_t ssid_len;
   while (body < (packet_data + packetLen)) {
     const uint8_t* p = body;
-    ie = (const struct mgmt_ie_hdr*) body;
+    ie = reinterpret_cast<const struct mgmt_ie_hdr*>(body);
     body += 2;
     if ((body + ie->len) > (packet_data + packetLen)) {
       return -1;
@@ -624,8 +627,8 @@ DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
 }
 
 
-void copy_ether_addr(struct ether_addr *destAddr,
-                     const struct ether_addr *srcAddr) {
+void copy_ether_addr(struct ether_addr* destAddr,
+                     const struct ether_addr* srcAddr) {
   int i;
 
   for (i = 0; i < ETH_ALEN; i++) {
@@ -634,7 +637,7 @@ void copy_ether_addr(struct ether_addr *destAddr,
 }
 
 void
-updateSecurity(WifiMetadata* wifiMetadata, ApplicationContext* context) {
+UpdateSecurity(WifiMetadata* wifiMetadata, ApplicationContext* context) {
   wifiMetadata->security = 0;
 
   if (!wifiMetadata->bssidPresent) {

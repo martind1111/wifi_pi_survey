@@ -15,7 +15,7 @@ extern "C" {
 }
 #include "NetworkDiscovery.h"
 #include "Database.h"
-#include "InterfaceReader.h"
+#include "PcapReader.h"
 #include "GpsMonitor.h"
 #include "ChannelScanner.h"
 #include "HeartbeatMonitor.h"
@@ -128,6 +128,7 @@ copy_argv(char** argv) {
 void
 ParseArguments(int argc, char* argv[], ApplicationContext* context) {
   context->dev = NULL;
+  context->fileName = NULL;
   context->eflag = 0;
   context->interactive = false;
   context->npkts = -1;
@@ -150,6 +151,7 @@ ParseArguments(int argc, char* argv[], ApplicationContext* context) {
       {"output",             required_argument, 0, 'o'},
       {"output-pcap",        required_argument, 0, 'w'},
       {"polls",              required_argument, 0, 'p'},
+      {"input-pcap",         required_argument, 0, 'r'},
       {"verbose",            required_argument, 0, 'v'},
       {"debug-lcd",          no_argument,       0, 'l'},
       {"debug-gps",          no_argument,       0, 'g'},
@@ -159,7 +161,7 @@ ParseArguments(int argc, char* argv[], ApplicationContext* context) {
 
     int option_index = 0;
 
-    int c = getopt_long(argc, argv, "ei:Ip:v:o:w:lg", long_options,
+    int c = getopt_long(argc, argv, "ei:Ip:v:o:r:w:lg", long_options,
                         &option_index);
 
     if (c == -1)
@@ -175,11 +177,14 @@ ParseArguments(int argc, char* argv[], ApplicationContext* context) {
       case 'I':
         context->interactive = true;
         break;
+      case 'o':
+        context->out = fopen(optarg, "w");
+        break;
       case 'p':
         context->npkts = atoi(optarg);
         break;
-      case 'o':
-        context->out = fopen(optarg, "w");
+      case 'r':
+        context->fileName = optarg;
         break;
       case 'w':
         context->outPcap = fopen(optarg, "w");
@@ -234,7 +239,7 @@ main(int argc, char** argv) {
 
   pthread_create(&gpsThreadId, NULL, MonitorGps, &context);
 
-  pthread_create(&interfaceThreadId, NULL, MonitorInterface, &context);
+  pthread_create(&interfaceThreadId, NULL, MonitorPcap, &context);
 
   pthread_create(&displayThreadId, NULL, DisplayMenu, &context);
 

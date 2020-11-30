@@ -22,8 +22,8 @@ add_compile_options(
 #set_project_warnings(project_settings)
 
 # Sanitizer options if supported by compiler
-#include(cmake/Sanitizers.cmake)
-#enable_sanitizers(project_settings)
+include(cmake/Sanitizers.cmake)
+enable_sanitizers(project_settings)
 
 # Enable doxygen
 include(cmake/Doxygen.cmake)
@@ -33,11 +33,14 @@ enable_doxygen()
 include(cmake/StaticAnalyzers.cmake)
 
 # Testing
-option(ENABLE_TESTING "Enable Test Builds" OFF)
+option(ENABLE_TESTING "Enable Test Builds" ON)
 include(cmake/AddGoogleTest.cmake)
 
 # Common libs
 #find_package(Boost REQUIRED filesystem)
+
+SET (PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
+SET (PROJECT_SOURCE_DIR "${PROJECT_SOURCE_DIR}/src")
 
 if (ENABLE_TESTING)
     enable_testing()

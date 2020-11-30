@@ -15,8 +15,10 @@ function(AddGoogleTest TEST_NAME TEST_SRCS TEST_LIBS)
     target_link_libraries(
             ${TEST_NAME}
             PRIVATE
-            GTest::gtest
-            GTest::gtest_main
+            gtest
+            gtest_main
+#            GTest::gtest
+#            GTest::gtest_main
             PUBLIC
             ${TEST_LIBS})
     target_link_libraries(${TEST_NAME} PRIVATE project::settings)

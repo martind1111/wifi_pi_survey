@@ -1,17 +1,17 @@
 #ifndef _INTERFACE_READER_H
-#define _INTERFACE_READER_H
+#define _INTERAFCE_READER_H
 
-#include "Worker.h"
+#include <pcap/pcap.h>
+
+#include "PcapReader.h"
 
 class ApplicationContext;
 
-void* MonitorInterface(void* context);
-
-class InterfaceReader : Worker {
+class InterfaceReader : public PcapReader {
 public:
-    InterfaceReader(ApplicationContext* context) : Worker(context) { }
+    InterfaceReader(ApplicationContext* context) : PcapReader(context) { }
 
-    void Run() override;
+    pcap_t* Open(char* errbuf) override;
 };
 
 #endif // _INTERFACE_READER_H

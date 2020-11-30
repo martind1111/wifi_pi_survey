@@ -211,7 +211,7 @@ GpsMonitor::UpdateDistance(struct gps_fix_t* gps_fix) {
   }
 
   if (this->GetContext()->debugGps) { 
-    string debugStr = fmt::format("GPS reading: Altitude {} longitude {}\n",
+    string debugStr = fmt::format("GPS reading: Latitude {} longitude {}\n",
                                   gps_fix->latitude, gps_fix->longitude);
 
     syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());

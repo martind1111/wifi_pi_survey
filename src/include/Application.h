@@ -42,6 +42,7 @@ public:
 
     int datalink;
     char* dev;
+    char* fileName;
     uint32_t npkts;
     char* oper; // Filter or Operation
     short int vflag; // Verbosity flag

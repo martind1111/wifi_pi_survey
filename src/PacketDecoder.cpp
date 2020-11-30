@@ -1,3 +1,17 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "PacketDecoder.h"
 
 #include <stdio.h>
@@ -35,6 +49,7 @@ extern "C" {
 #include "WifiMetadata.h"
 
 namespace {
+uint16_t ReadShort(const uint8_t* data);
 void DecodeRadiotap(const Packet* packet, void* user,
                     WifiMetadata* wifiMetadata);
 
@@ -51,8 +66,8 @@ int DecodeBeacon(const uint8_t* packet, size_t packetLen,
 int DecodeProbeResp(const uint8_t* packet, size_t packetLen,
                     WifiMetadata *wifiMetadata);
 
-void copy_ether_addr(struct ether_addr* destAddr,
-                     const struct ether_addr* srcAddr);
+void copy_ether_addr(ether_addr* destAddr,
+                     const ether_addr* srcAddr);
 void UpdateSecurity(WifiMetadata *wifiMetadata, ApplicationContext* context);
 }
 
@@ -60,12 +75,29 @@ using namespace std;
 
 void PacketDecoder::Decode(const Packet* packet, void* user,
                            WifiMetadata* wifiMetadata) {
-    DecodeRadiotap(packet, user, wifiMetadata);
-    DecodeIeee80211(packet, user, wifiMetadata);
+  DecodeRadiotap(packet, user, wifiMetadata);
+  DecodeIeee80211(packet, user, wifiMetadata);
 }
 
 namespace {
-/* Decode Radiotap header */
+/**
+ * Read a network order 16-bit value, potentially unaligned, and return
+ * its 16-bit host order value.
+ */
+uint16_t ReadShort(const uint8_t* data) {
+  uint16_t value;
+  memcpy(&value, data, sizeof(value));
+  return ntohs(value);
+}
+
+/**
+ * Decode radiotap header. Fill in the specified radiotap header portion of
+ * the packet metadata accordingly.
+ *
+ * @param packet Pointer to packet instance
+ * @param user Pointer to application context
+ * @param wifiMetadata Pointer to resulting Wi-Fi metadata
+ */
 void
 DecodeRadiotap(const Packet* packet, void* user,
                WifiMetadata* wifiMetadata) {
@@ -90,6 +122,7 @@ DecodeRadiotap(const Packet* packet, void* user,
     return;
   }
 
+  // Reset radiotap header associated metadata.
   int antenna = 0, pwr = 0;
   wifiMetadata->channel = 0;
   wifiMetadata->rate = 0;
@@ -102,38 +135,40 @@ DecodeRadiotap(const Packet* packet, void* user,
   wifiMetadata->dbmNoise = 0;
   wifiMetadata->dbmSnr = 0;
   struct ieee80211_radiotap_iterator iterator;
+
   int ret = ieee80211_radiotap_iterator_init(
     &iterator,
     const_cast<ieee80211_radiotap_header*>(radiotap_hdr),
     radiotap_len);
+
   while (!ret) {
     ret = ieee80211_radiotap_iterator_next(&iterator);
 
     if (ret)
       continue;
 
-    /* See if this argument is something we can use */
+    // See if this argument is something we can use.
 
     switch (iterator.this_arg_index) {
     /*
-     * You must take care when dereferencing iterator.this_arg
+     * We must take care when dereferencing iterator.this_arg
      * for multibyte types. The pointer is not aligned. Use
      * get_unaligned((type *)iterator.this_arg) to dereference
      * iterator.this_arg for type "type" safely on all architectures.
      */
     case IEEE80211_RADIOTAP_RATE:
-      /* radiotap "rate" u8 is in
-       * 500 kbps units, eg, 0x02=1Mbps
-       */
+      // Radiotap "rate" u8 is in
+      // 500 kbps units, eg, 0x02=1Mbps
+      //
       wifiMetadata->rate = (*iterator.this_arg) * 5; // In units of 100 kHz
       break;
 
     case IEEE80211_RADIOTAP_CHANNEL:
-      wifiMetadata->channel = *((uint16_t *) iterator.this_arg);
+      wifiMetadata->channel = ReadShort(iterator.this_arg);
       break;
 
     case IEEE80211_RADIOTAP_ANTENNA:
-      /* radiotap uses 0 for 1st ant */
+      // Radiotap uses 0 for 1st antenna
       wifiMetadata->antenna = *iterator.this_arg;
       break;
 
@@ -160,10 +195,17 @@ DecodeRadiotap(const Packet* packet, void* user,
     default:
       break;
     }
-  }  /* while more rt headers */
+  }  // while more radiotap headers
 }
 
-/* Decode IEEE 802.11 header */
+/**
+ * Decode the IEEE 802.11 header. Fill in the specified IEEE 802.11 header
+ * portion of the packet metadata accordingly.
+ *
+ * @param packet Pointer to packet instance
+ * @param user Pointer to application context
+ * @param wifiMetadata Pointer to resulting Wi-Fi metadata
+ */
 void
 DecodeIeee80211(const Packet* packet, void* user,
                 WifiMetadata* wifiMetadata) {
@@ -176,14 +218,12 @@ DecodeIeee80211(const Packet* packet, void* user,
   wifiMetadata->timestamp = packet->GetTimestamp();
 
   const struct ieee80211_radiotap_header* radiotap_hdr =
-    (const struct ieee80211_radiotap_header*) packet_data;
+    reinterpret_cast<const struct ieee80211_radiotap_header*>(packet_data);
   uint16_t radiotap_len = radiotap_hdr->it_len;
 
   if (caplen - radiotap_len < FC_LEN) {
-    char errStr[256];
-
-    sprintf(errStr, "Packet length is less than 2 bytes: "
-            "Invalid 802.11 MAC header");
+    const char* errStr =
+      "Packet length is less than 2 bytes: Invalid 802.11 MAC header";
 
     syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr);
 
@@ -191,8 +231,9 @@ DecodeIeee80211(const Packet* packet, void* user,
   }
 
   const struct mac_header* p =
-    (const struct mac_header*) (packet_data + radiotap_len);
-  const struct frame_control* control = (struct frame_control*) p->fc;
+    reinterpret_cast<const struct mac_header*>(packet_data + radiotap_len);
+  const struct frame_control* control =
+    reinterpret_cast<const struct frame_control*>(p->fc);
 
   wifiMetadata->security = 0;
 
@@ -207,17 +248,31 @@ DecodeIeee80211(const Packet* packet, void* user,
 
   if (control->type == MGMT &&
       control->subtype == SUBTYPE_BITFIELD(ASSOCREQ_TYPE)) {
-    DecodeAssocReq((uint8_t*) p, caplen - radiotap_len, wifiMetadata);
+    DecodeAssocReq(reinterpret_cast<const uint8_t*>(p),
+                   caplen - radiotap_len, wifiMetadata);
   }
   else if (control->type == MGMT &&
            control->subtype == SUBTYPE_BITFIELD(BEACON_TYPE)) {
-    DecodeBeacon((uint8_t*) p, caplen - radiotap_len, wifiMetadata);
+    DecodeBeacon(reinterpret_cast<const uint8_t*>(p),
+                 caplen - radiotap_len, wifiMetadata);
   }
   else if (control->type == MGMT &&
            control->subtype == SUBTYPE_BITFIELD(PROBERESP_TYPE)) {
-    DecodeProbeResp((uint8_t*) p, caplen - radiotap_len, wifiMetadata);
+    DecodeProbeResp(reinterpret_cast<const uint8_t*>(p),
+                    caplen - radiotap_len, wifiMetadata);
   }
 }
+
+/**
+ * Parse the various addresses that may be present in the specified Wi-Fi
+ * packet. Fill in the specified packet metadata accordingly. The presence
+ * of certain type of addresses depends on the type and subtype of frame. The
+ * various addresses that may be present are: BSSID, SA (source address),
+ * DA (destination address), RA (receiver address) and TA (terminating address).
+ *
+ * @param packet Pointer to packet instance
+ * @param wififMetdata Pointer to the resulting packet metadata
+ */
 
 void
 ParseAddresses(const Packet* packet,
@@ -380,18 +435,20 @@ ParseAddresses(const Packet* packet,
 /**
  * Decode Association Request message.
  *
+ * @param packet_data Pointer to start of management header
+ * @param wifiMetadata Pointer to resulting packet metadata
  * @return -1 if error, 0 otherwise.
  */
 int
-DecodeAssocReq(const uint8_t *packet_data, size_t packetLen,
+DecodeAssocReq(const uint8_t* packet_data, size_t packetLen,
                WifiMetadata* wifiMetadata) {
   const struct mgmt_hdr* mgmthdr;
   const struct mgmt_ie_hdr* ie;
   const uint8_t* body;
   int i;
 
-  mgmthdr = (const struct mgmt_hdr*) packet_data;
-  body = (const uint8_t*) packet_data + MGMT_HDR_LEN;
+  mgmthdr = reinterpret_cast<const struct mgmt_hdr*>(packet_data);
+  body = reinterpret_cast<const uint8_t*>(packet_data) + MGMT_HDR_LEN;
 
   if ((body + FIELD_CAP_LEN + FIELD_LI_LEN) > (packet_data + packetLen)) {
     return -1;
@@ -415,7 +472,9 @@ DecodeAssocReq(const uint8_t *packet_data, size_t packetLen,
   // Decode information elements.
   size_t ssid_len;
   while (body < (packet_data + packetLen)) {
-    ie = (const struct mgmt_ie_hdr*) body;
+    // TODO: Not sure if the following code is safe. Might be some bit
+    // alignment and network ordering byte issue.
+    ie = reinterpret_cast<const struct mgmt_ie_hdr*>(body);
     body += 2;
     if ((body + ie->len) > (packet_data + packetLen)) {
       return -1;
@@ -437,6 +496,13 @@ DecodeAssocReq(const uint8_t *packet_data, size_t packetLen,
   return 0;
 }
 
+/**
+ * Decode Probe Response message.
+ *
+ * @param packet_data Pointer to start of management header
+ * @param wifiMetadata Pointer to resulting packet metadata
+ * @return -1 if error, 0 otherwise.
+ */
 int
 DecodeProbeResp(const uint8_t* packet_data, size_t packetLen,
                 WifiMetadata* wifiMetadata) {
@@ -445,8 +511,8 @@ DecodeProbeResp(const uint8_t* packet_data, size_t packetLen,
   const uint8_t* body;
   int i;
 
-  mgmthdr = (const struct mgmt_hdr *) packet_data;
-  body = (const uint8_t *) packet_data + MGMT_HDR_LEN;
+  mgmthdr = reinterpret_cast<const struct mgmt_hdr *>(packet_data);
+  body = reinterpret_cast<const uint8_t *>(packet_data) + MGMT_HDR_LEN;
 
   if ((body + FIELD_TS_LEN + FIELD_BI_LEN + FIELD_CAP_LEN) >
       (packet_data + packetLen)) {
@@ -471,7 +537,9 @@ DecodeProbeResp(const uint8_t* packet_data, size_t packetLen,
   // Decode information elements.
   size_t ssid_len;
   while (body < (packet_data + packetLen)) {
-    ie = (const struct mgmt_ie_hdr*) body;
+    // TODO: Not sure if the following code is safe. Might be some bit
+    // alignment and network ordering byte issue.
+    ie = reinterpret_cast<const struct mgmt_ie_hdr*>(body);
     body += 2;
     if ((body + ie->len) > (packet_data + packetLen)) {
       return -1;
@@ -531,6 +599,8 @@ DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
   // Decode information elements.
   size_t ssid_len;
   while (body < (packet_data + packetLen)) {
+    // TODO: Not sure if the following code is safe. Might be some bit
+    // alignment and network ordering byte issue.
     const uint8_t* p = body;
     ie = reinterpret_cast<const struct mgmt_ie_hdr*>(body);
     body += 2;
@@ -627,8 +697,8 @@ DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
 }
 
 
-void copy_ether_addr(struct ether_addr* destAddr,
-                     const struct ether_addr* srcAddr) {
+void copy_ether_addr(ether_addr* destAddr,
+                     const ether_addr* srcAddr) {
   int i;
 
   for (i = 0; i < ETH_ALEN; i++) {

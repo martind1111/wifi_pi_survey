@@ -1,3 +1,17 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "NetworkDiscovery.h"
 
 #include <pthread.h>
@@ -22,19 +36,19 @@ extern "C" {
 
 using namespace std;
 
-static struct ether_addr BROADCAST_ADDRESS;
-static struct ether_addr MULTICAST_ADDRESS;
-static struct ether_addr MULTICAST_IPV6_ADDRESS;
+static ether_addr BROADCAST_ADDRESS;
+static ether_addr MULTICAST_ADDRESS;
+static ether_addr MULTICAST_IPV6_ADDRESS;
 
 namespace {
 void InitReservedAddresses();
-int compare_ether_addr(struct ether_addr* eaddr,
-                       struct ether_addr* baseAddr, uint32_t numBytes);
-bool IsBroadcast(struct ether_addr* eaddr);
-bool IsMulticast(struct ether_addr* eaddr);
-bool IsIpv6Multicast(struct ether_addr* eaddr);
-uint32_t GetElapsed(time_t t);
-void SetCurrentLocation(Location* location, ApplicationContext* context);
+int CompareEtherAddr(const ether_addr* eaddr,
+                     const ether_addr* baseAddr, uint32_t numBytes);
+bool IsBroadcast(const ether_addr* eaddr);
+bool IsMulticast(const ether_addr* eaddr);
+bool IsIpv6Multicast(const ether_addr* eaddr);
+uint32_t GetElapsed(const time_t t);
+void SetCurrentLocation(Location* location, const ApplicationContext* context);
 }
 
 void
@@ -55,10 +69,10 @@ InitReservedAddresses() {
 } // namespace
 
 void
-NetworkDiscovery::UpdateNetworkResources(WifiMetadata* wifiMetadata) {
-  struct ether_addr* bssid = GetBssid(wifiMetadata);
+NetworkDiscovery::UpdateNetworkResources(const WifiMetadata* wifiMetadata) {
+  const ether_addr* bssid = GetBssid(wifiMetadata);
 
-  if (bssid != NULL) {
+  if (bssid) {
     ReportNetwork(bssid, wifiMetadata);
 
     if (wifiMetadata->srcAddrPresent &&
@@ -101,8 +115,8 @@ NetworkDiscovery::UpdateNetworkResources(WifiMetadata* wifiMetadata) {
 }
 
 void
-NetworkDiscovery::ReportNetwork(struct ether_addr* bssid,
-                                WifiMetadata* wifiMetadata) {
+NetworkDiscovery::ReportNetwork(const ether_addr* bssid,
+                                const WifiMetadata* wifiMetadata) {
   map<string, NetworkInfo_t*>::iterator iter;
   NetworkInfo_t* networkInfo;
 
@@ -206,9 +220,9 @@ NetworkDiscovery::ReportNetwork(struct ether_addr* bssid,
 }
 
 void
-NetworkDiscovery::ReportClient(struct ether_addr* bssid,
-                               struct ether_addr* client,
-                               WifiMetadata* wifiMetadata) {
+NetworkDiscovery::ReportClient(const ether_addr* bssid,
+                               const ether_addr* client,
+                               const WifiMetadata* wifiMetadata) {
   map<string, NetworkInfo*>::iterator iter;
   string bssidStr = string(ether_ntoa(bssid));
   string clientAddr = string(ether_ntoa(client));
@@ -303,8 +317,8 @@ NetworkDiscovery::ReportClient(struct ether_addr* bssid,
 }
 
 void
-NetworkDiscovery::ReportUnassignedClient(struct ether_addr* client,
-                                         WifiMetadata* wifiMetadata) {
+NetworkDiscovery::ReportUnassignedClient(const ether_addr* client,
+                                         const WifiMetadata* wifiMetadata) {
   map<string, string>::iterator iter;
   string clientAddr = string(ether_ntoa(client));
 
@@ -312,7 +326,7 @@ NetworkDiscovery::ReportUnassignedClient(struct ether_addr* client,
   iter = assignedClients.find(clientAddr);
 
   if (iter != assignedClients.end()) {
-    struct ether_addr *bssid = ether_aton(iter->second.c_str());
+    ether_addr *bssid = ether_aton(iter->second.c_str());
     ReportClient(bssid, client, wifiMetadata);
 
     return;
@@ -335,28 +349,8 @@ NetworkDiscovery::ReportUnassignedClient(struct ether_addr* client,
   }
 }
 
-/**
- * Determine if the specified MAC address has been flagged as a BSSID.
- */
-bool
-NetworkDiscovery::IsNetworkAddress(struct ether_addr* macAddr) {
-  return networks.find(ether_ntoa(macAddr)) != networks.end();
-}
-
-bool
-NetworkDiscovery::IsClientAddress(struct ether_addr* addr) {
-  return !IsNetworkAddress(addr) && !IsBroadcast(addr) && !IsMulticast(addr);
-}
-
-struct ether_addr*
-NetworkDiscovery::GetBssid(WifiMetadata* wifiMetadata) {
-  string bssid;
-  string srcAddr;
-  string destAddr;
-  string ra;
-  string ta;
-  string clientAddr;
-
+const ether_addr*
+NetworkDiscovery::GetBssid(const WifiMetadata* wifiMetadata) {
   if (wifiMetadata->bssidPresent && !IsBroadcast(&wifiMetadata->bssid) &&
       !IsMulticast(&wifiMetadata->bssid)) {
     return &wifiMetadata->bssid;
@@ -371,7 +365,6 @@ NetworkDiscovery::GetBssid(WifiMetadata* wifiMetadata) {
       IsNetworkAddress(&wifiMetadata->destAddr)) {
     return &wifiMetadata->destAddr;
   }
-
   if (wifiMetadata->raPresent && IsNetworkAddress(&wifiMetadata->ra)) {
     return &wifiMetadata->ra;
   }
@@ -380,7 +373,20 @@ NetworkDiscovery::GetBssid(WifiMetadata* wifiMetadata) {
     return &wifiMetadata->ta;
   }
 
-  return NULL;
+  return nullptr;
+}
+
+/**
+ * Determine if the specified MAC address has been flagged as a BSSID.
+ */
+bool
+NetworkDiscovery::IsNetworkAddress(const ether_addr* macAddr) {
+  return networks.find(ether_ntoa(macAddr)) != networks.end();
+}
+
+bool
+NetworkDiscovery::IsClientAddress(const ether_addr* addr) {
+  return !IsNetworkAddress(addr) && !IsBroadcast(addr) && !IsMulticast(addr);
 }
 
 bool
@@ -580,7 +586,7 @@ NetworkDiscovery::DisplayNetworks() {
 
     for (clientIter = iter->second->clients.begin();
          clientIter != iter->second->clients.end(); clientIter++) {
-      struct ether_addr *addr = ether_aton(clientIter->first.c_str());
+      ether_addr *addr = ether_aton(clientIter->first.c_str());
       const char *manuf = HardwareHelper::GetManufacturer(addr);
       fprintf(this->context->out, "  %s ", clientIter->first.c_str());
       if (manuf != NULL) {
@@ -625,7 +631,7 @@ NetworkDiscovery::DisplayNetworks() {
 
   for (clientIter = unassignedClients.begin();
        clientIter != unassignedClients.end(); clientIter++) {
-    struct ether_addr *addr = ether_aton(clientIter->first.c_str());
+    ether_addr *addr = ether_aton(clientIter->first.c_str());
     const char *manuf = HardwareHelper::GetManufacturer(addr);
     fprintf(this->context->out, "  %s %s\n", clientIter->first.c_str(),
             manuf == NULL ? "" : manuf);
@@ -800,10 +806,22 @@ NetworkDiscovery::GetClients(const string& bssid, vector<string>& clients) {
   pthread_mutex_unlock(&networkMutex);
 }
 
+uint32_t
+NetworkDiscovery::GetSecurity(const ether_addr* bssid) {
+  NetworkInfo_t networkInfo;
+  string bssidStr = string(ether_ntoa(bssid));
+
+  if (this->GetNetwork(bssidStr, networkInfo)) {
+    return networkInfo.security;
+  }
+
+  return 0;
+}
+
 namespace {
 int
-compare_ether_addr(struct ether_addr* eaddr, struct ether_addr* baseAddr,
-                   uint32_t numBytes) {
+CompareEtherAddr(const ether_addr* eaddr, const ether_addr* baseAddr,
+                 uint32_t numBytes) {
   int i;
 
   for (i = 0; i < numBytes; i++) {
@@ -818,22 +836,28 @@ compare_ether_addr(struct ether_addr* eaddr, struct ether_addr* baseAddr,
 }
 
 bool
-IsBroadcast(struct ether_addr* eaddr) {
-  return compare_ether_addr(eaddr, &BROADCAST_ADDRESS, ETH_ALEN) == 0;
+IsBroadcast(const ether_addr* eaddr) {
+  return CompareEtherAddr(eaddr, &BROADCAST_ADDRESS, ETH_ALEN) == 0;
 }
 
 bool
-IsMulticast(struct ether_addr* eaddr) {
-  return compare_ether_addr(eaddr, &MULTICAST_ADDRESS, 3) == 0 ||
+IsMulticast(const ether_addr* eaddr) {
+  return CompareEtherAddr(eaddr, &MULTICAST_ADDRESS, 3) == 0 ||
     IsIpv6Multicast(eaddr);
 }
 
 bool
-IsIpv6Multicast(struct ether_addr* eaddr) {
-  return compare_ether_addr(eaddr, &MULTICAST_IPV6_ADDRESS, 2) == 0;
+IsIpv6Multicast(const ether_addr* eaddr) {
+  return CompareEtherAddr(eaddr, &MULTICAST_IPV6_ADDRESS, 2) == 0;
 }
 
-uint32_t GetElapsed(time_t t) {
+/**
+ * Determine elapsed between now and specified time (in seconds).
+ *
+ * @param t Time from which to estimate elapse time
+ * @return Number of seconds that have elapsed between now and specified time
+ */
+uint32_t GetElapsed(const time_t t) {
   struct timeval tv;
 
   if (gettimeofday(&tv, NULL) == -1) {
@@ -844,11 +868,11 @@ uint32_t GetElapsed(time_t t) {
     return 0;
   }
 
-  return (uint32_t) (tv.tv_sec - t);  
+  return static_cast<uint32_t>(tv.tv_sec - t);  
 }
 
 void
-SetCurrentLocation(Location* location, ApplicationContext* context) {
+SetCurrentLocation(Location* location, const ApplicationContext* context) {
   location->latitude = context->lastLocation.latitude;
 
   location->longitude = context->lastLocation.longitude;
@@ -861,4 +885,4 @@ SetCurrentLocation(Location* location, ApplicationContext* context) {
 
   location->timestamp = context->lastLocation.timestamp;
 }
-}
+} // namespace

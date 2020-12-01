@@ -2,20 +2,24 @@
 #define _WIFI_METADATAY_H
 
 #include <stdint.h>
+#include <netinet/ether.h>
+#include <netinet/in.h>
+
+#include "WifiTypes.h"
 
 struct WifiMetadata {
   bool destAddrPresent;
   struct ether_addr destAddr;
   bool srcAddrPresent;
-  struct ether_addr srcAddr;
+  ether_addr srcAddr;
   bool bssidPresent;
   struct ether_addr bssid;
   bool raPresent;
-  struct ether_addr ra;
+  ether_addr ra;
   bool taPresent;
-  struct ether_addr ta;
-  struct in_addr srcIpAddr;
-  struct in_addr destIpAddr;
+  ether_addr ta;
+  in_addr srcIpAddr;
+  in_addr destIpAddr;
   char ssid[MAX_SSID_LEN + 1];
   bool fromDs;
   bool toDs;

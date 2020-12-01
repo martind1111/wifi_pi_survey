@@ -9,11 +9,11 @@
 #include <netinet/in.h>
 
 #include "GpsTypes.h"
-
-#define MAX_SSID_LEN 32
+#include "WifiTypes.h"
 
 struct WifiMetadata;
 class ApplicationContext;
+struct ether_addr;
 
 typedef struct ClientInfo {
   uint16_t rate;
@@ -30,7 +30,7 @@ typedef struct ClientInfo {
 typedef struct NetworkInfo {
   std::string ssid;
   uint32_t security;
-  std::map<std::string, ClientInfo_t *> clients;
+  std::map<std::string, ClientInfo_t*> clients;
   uint32_t channel;
   uint32_t radiotapChannel;
   time_t firstSeen;
@@ -49,7 +49,7 @@ public:
     NetworkDiscovery(ApplicationContext* ctx) : context(ctx),
         networkMutex(PTHREAD_MUTEX_INITIALIZER) { InitNetworkDiscovery(); }
 
-    void UpdateNetworkResources(WifiMetadata* wifiMetadata);
+    void UpdateNetworkResources(const WifiMetadata* wifiMetadata);
 
     void BeginNetworkIterator(NetworkIterator& networkIterator);
     void EndNetworkIterator(NetworkIterator& networkIterator);
@@ -58,21 +58,22 @@ public:
                                  std::string& bssid);
     void NextNetwork(NetworkIterator& networkIterator);
 
-    struct ether_addr *GetBssid(WifiMetadata* wifiMetadata);
-    bool IsNetworkAddress(struct ether_addr* macAddr);
-    bool IsClientAddress(struct ether_addr* addr);
+    void DisplayNetworks();
+
+    bool IsNetworkAddress(const ether_addr* macAddr);
+    bool IsClientAddress(const ether_addr* addr);
     bool IsSecureNetwork(int securityMask);
     bool IsOpenNetwork();
     bool IsWepNetwork();
     bool IsWpaNetwork();
 
-    void DisplayNetworks();
-
     bool GetNetwork(const std::string& bssid, NetworkInfo_t& networkInfo);
+    const ether_addr *GetBssid(const WifiMetadata* wifiMetadata);
     bool GetClient(const std::string& bssid, const std::string& clientAddr,
                    ClientInfo_t& clientInfo );
     void GetClients(const std::string& bssid,
                     std::vector<std::string>& clients);
+    uint32_t GetSecurity(const ether_addr* bssid);
     const char *GetBestClientSignal(const std::string& bssid);
     size_t GetNetworkCount();
 
@@ -81,12 +82,13 @@ public:
 private:
     void InitNetworkDiscovery();
 
-    void ReportNetwork(struct ether_addr* bssid,
-                       WifiMetadata* wifiMetadata);
-    void ReportClient(struct ether_addr* bssid,
-                      struct ether_addr* client, WifiMetadata* wifiMetadata);
-    void ReportUnassignedClient(struct ether_addr* client,
-                                WifiMetadata* wifiMetadata);
+    void ReportNetwork(const ether_addr* bssid,
+                       const WifiMetadata* wifiMetadata);
+    void ReportClient(const ether_addr* bssid,
+                      const ether_addr* client,
+                      const WifiMetadata* wifiMetadata);
+    void ReportUnassignedClient(const ether_addr* client,
+                                const WifiMetadata* wifiMetadata);
 
     ApplicationContext* context;
 
@@ -101,4 +103,4 @@ private:
     pthread_mutex_t networkMutex;
 };
 
-#endif // _NETWORKK_DISCOVERY_H
+#endif // _NETWORK_DISCOVERY_H

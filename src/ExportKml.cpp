@@ -1,3 +1,23 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * This executable retrieves all network and client equipments from the
+ * sqlite3 database and generates a KML file that can be imported into
+ * Google Earth to display network and client equipments on a geo map.
+ */
+
 #include <stdio.h>
 #include <sqlite3.h>
 #include <math.h>
@@ -13,11 +33,12 @@
 
 using namespace std;
 
-static int callback(void *data, int argc, char **argv, char **azColName);
-static void printStyles(FILE *f);
+namespace {
+int Callback(void* data, int argc, char** argv, char** azColName);
+void PrintStyles(FILE *f);
 
-static int
-callback(void *data, int argc, char **argv, char **azColName){
+int
+Callback(void* data, int argc, char** argv, char** azColName){
   int i;
   char bssid[32];
   char ssid[64];
@@ -111,64 +132,8 @@ callback(void *data, int argc, char **argv, char **azColName){
   return 0;
 }
 
-int
-main(int argc, char *argv[]) {
-  sqlite3 *db;
-  char errstr[256];
-  char *zErrMsg = 0;
-  int rc;
-  ostringstream sql;
-  const char *data;
-  FILE *f = NULL;
-
-  f = fopen(FILENAME_KML, "w");
-
-  if (f == NULL) {
-    sprintf(errstr, "Failed exporting network information to KML: "
-            "Can't open file %s", FILENAME_KML);
-    perror(errstr);
-    return 0;
-  }
-
-  fprintf(f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-          "<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n"
-          "<Document>\n");
-
-  printStyles(f);
-
-  /* Open database */
-  rc = sqlite3_open(WIRELESS_DB, &db);
-
-  if (rc) {
-     fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
-
-     return 0;
-  }
-
-  sql << "SELECT ssid, bssid, manufacturer, security, latitude, longitude "
-         "FROM network";
-
-  /* Execute SQL statement */
-  rc = sqlite3_exec(db, sql.str().c_str(), callback, (void *) f,
-                    &zErrMsg);
-
-  if (rc != SQLITE_OK) {
-    fprintf(stderr, "SQL error: %s\n", zErrMsg);
-    sqlite3_free(zErrMsg);
-  }
-
-  sqlite3_close(db);
-
-  fprintf(f, "</Document>\n"
-          "</kml>\n");
-
-  fclose(f);
-
-  return 0;
-}
-
-static void
-printStyles(FILE *f) {
+void
+PrintStyles(FILE *f) {
   fprintf(f, "  <Style id=\"openIcon\">\n");
   fprintf(f, "    <IconStyle>\n");
   fprintf(f, "      <Icon>\n");
@@ -197,4 +162,61 @@ printStyles(FILE *f) {
   fprintf(f, "      </Icon>\n");
   fprintf(f, "    </IconStyle>\n");
   fprintf(f, "  </Style>\n");
+}
+} // namespace
+
+int
+main(int argc, char* argv[]) {
+  sqlite3* db;
+  char errstr[256];
+  char *zErrMsg = 0;
+  int rc;
+  ostringstream sql;
+  const char *data;
+  FILE* f = NULL;
+
+  f = fopen(FILENAME_KML, "w");
+
+  if (f == NULL) {
+    sprintf(errstr, "Failed exporting network information to KML: "
+            "Can't open file %s", FILENAME_KML);
+    perror(errstr);
+    return 0;
+  }
+
+  fprintf(f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+          "<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n"
+          "<Document>\n");
+
+  PrintStyles(f);
+
+  /* Open database */
+  rc = sqlite3_open(WIRELESS_DB, &db);
+
+  if (rc) {
+     fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+
+     return 0;
+  }
+
+  sql << "SELECT ssid, bssid, manufacturer, security, latitude, longitude "
+         "FROM network";
+
+  /* Execute SQL statement */
+  rc = sqlite3_exec(db, sql.str().c_str(), Callback, (void *) f,
+                    &zErrMsg);
+
+  if (rc != SQLITE_OK) {
+    fprintf(stderr, "SQL error: %s\n", zErrMsg);
+    sqlite3_free(zErrMsg);
+  }
+
+  sqlite3_close(db);
+
+  fprintf(f, "</Document>\n"
+          "</kml>\n");
+
+  fclose(f);
+
+  return 0;
 }

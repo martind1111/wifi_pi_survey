@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.13)
 set(GTEST_ROOT "/usr/include/gtest" CACHE PATH "Path to googletest")
 find_package(GTest REQUIRED)
 
-add_library(${CMAKE_PROJECT_NAME}Test STATIC ${PROJECT_SOURCE_DIR}/HardwareHelper.cpp ${PROJECT_SOURCE_DIR}/gps_utils.c)
+add_library(${CMAKE_PROJECT_NAME}Test STATIC ${PROJECT_SOURCE_DIR}/HardwareHelper.cpp ${PROJECT_SOURCE_DIR}/gps_utils.c ${PROJECT_SOURCE_DIR}/radiotap.c ${PROJECT_SOURCE_DIR}/PacketDecoder.cpp)
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
 
@@ -14,3 +14,6 @@ AddGoogleTest(ManufacturerTest "${MANUFACTURER_TEST_SRCS}" "${TEST_LIBS}")
 
 set(GPS_TEST_SRCS GpsTest.cpp)
 AddGoogleTest(GpsTest "${GPS_TEST_SRCS}" "${TEST_LIBS}")
+
+set(PACKET_DECODER_TEST_SRCS PacketDecoderTest.cpp)
+AddGoogleTest(PacketDecoderTest "${PACKET_DECODER_TEST_SRCS}" "${TEST_LIBS}")

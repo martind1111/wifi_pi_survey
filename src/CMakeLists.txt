@@ -1,7 +1,7 @@
 set(BINARY wscand)
 
 file(GLOB_RECURSE SOURCES LIST_DIRECTORIES true *.h *.c *.cpp)
-list(REMOVE_ITEM SOURCES ${CMAKE_SOURCE_DIR}/src/exportKml.cpp)
+list(REMOVE_ITEM SOURCES ${CMAKE_SOURCE_DIR}/src/ExportKml.cpp)
 
 set(SOURCES ${SOURCES})
 
@@ -20,17 +20,17 @@ target_include_directories(${BINARY}
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
 )
 
-set(EXPORT_KML_SOURCES exportKml.cpp StringHelper.cpp)
+set(EXPORT_KML_SOURCES ExportKml.cpp StringHelper.cpp)
 
-add_executable(exportKml ${EXPORT_KML_SOURCES})
+add_executable(export_kml ${EXPORT_KML_SOURCES})
 
-target_link_libraries(exportKml LINK_PUBLIC ${PROJECT_LINK_LIBS})
+target_link_libraries(export_kml LINK_PUBLIC ${PROJECT_LINK_LIBS})
 
-install(TARGETS exportKml
+install(TARGETS export_kml
     RUNTIME DESTINATION bin
 )
 
-target_include_directories(exportKml
+target_include_directories(export_kml
   PUBLIC include
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
 )

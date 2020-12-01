@@ -35,7 +35,7 @@
 
 #include "Application.h"
 #include "pkt.h"
-#include "wifi_types.h"
+#include "WifiPacketTypes.h"
 #include "radiotap.h"
 #include "pdos80211.h"
 extern "C" {
@@ -50,11 +50,9 @@ extern "C" {
 
 namespace {
 uint16_t ReadShort(const uint8_t* data);
-void DecodeRadiotap(const Packet* packet, void* user,
-                    WifiMetadata* wifiMetadata);
+void DecodeRadiotap(const Packet* packet, WifiMetadata* wifiMetadata);
 
-void DecodeIeee80211(const Packet* packet, void* user,
-                     WifiMetadata* wifiMetadata);
+void DecodeIeee80211(const Packet* packet, WifiMetadata* wifiMetadata);
 
 void ParseAddresses(const Packet* packet,
                     WifiMetadata* wifiMetadata);
@@ -68,15 +66,13 @@ int DecodeProbeResp(const uint8_t* packet, size_t packetLen,
 
 void copy_ether_addr(ether_addr* destAddr,
                      const ether_addr* srcAddr);
-void UpdateSecurity(WifiMetadata *wifiMetadata, ApplicationContext* context);
 }
 
 using namespace std;
 
-void PacketDecoder::Decode(const Packet* packet, void* user,
-                           WifiMetadata* wifiMetadata) {
-  DecodeRadiotap(packet, user, wifiMetadata);
-  DecodeIeee80211(packet, user, wifiMetadata);
+void PacketDecoder::Decode(const Packet* packet, WifiMetadata* wifiMetadata) {
+  DecodeRadiotap(packet, wifiMetadata);
+  DecodeIeee80211(packet, wifiMetadata);
 }
 
 namespace {
@@ -95,14 +91,11 @@ uint16_t ReadShort(const uint8_t* data) {
  * the packet metadata accordingly.
  *
  * @param packet Pointer to packet instance
- * @param user Pointer to application context
  * @param wifiMetadata Pointer to resulting Wi-Fi metadata
  */
 void
-DecodeRadiotap(const Packet* packet, void* user,
-               WifiMetadata* wifiMetadata) {
+DecodeRadiotap(const Packet* packet, WifiMetadata* wifiMetadata) {
   const uint8_t* packet_data = packet->GetData();
-  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(user);
   size_t caplen = packet->GetCaptureLength(); // Length of portion present from
                                               // BPF
   size_t length = packet->GetLength(); // Length of this packet off the wire
@@ -203,14 +196,11 @@ DecodeRadiotap(const Packet* packet, void* user,
  * portion of the packet metadata accordingly.
  *
  * @param packet Pointer to packet instance
- * @param user Pointer to application context
  * @param wifiMetadata Pointer to resulting Wi-Fi metadata
  */
 void
-DecodeIeee80211(const Packet* packet, void* user,
-                WifiMetadata* wifiMetadata) {
+DecodeIeee80211(const Packet* packet, WifiMetadata* wifiMetadata) {
   const uint8_t* packet_data = packet->GetData();
-  ApplicationContext* context = reinterpret_cast<ApplicationContext*>(user);
   size_t caplen =
     packet->GetCaptureLength(); // Length of portion present from BPF
   size_t length = packet->GetLength(); // Length of this packet off the wire
@@ -241,8 +231,6 @@ DecodeIeee80211(const Packet* packet, void* user,
   wifiMetadata->toDs = control->to_ds;
 
   ParseAddresses(packet, wifiMetadata);
-
-  UpdateSecurity(wifiMetadata, context);
 
   wifiMetadata->ssid[0] = 0;
 
@@ -703,24 +691,6 @@ void copy_ether_addr(ether_addr* destAddr,
 
   for (i = 0; i < ETH_ALEN; i++) {
     destAddr->ether_addr_octet[i] = srcAddr->ether_addr_octet[i];
-  }
-}
-
-void
-UpdateSecurity(WifiMetadata* wifiMetadata, ApplicationContext* context) {
-  wifiMetadata->security = 0;
-
-  if (!wifiMetadata->bssidPresent) {
-    return;
-  }
-
-  NetworkInfo_t networkInfo;
-  string bssid = string(ether_ntoa(&wifiMetadata->bssid));
-
-  NetworkDiscovery* networkDiscovery = context->GetNetworkDiscovery();
-
-  if (networkDiscovery->GetNetwork(bssid, networkInfo)) {
-    wifiMetadata->security = networkInfo.security;
   }
 }
 } // namespace

@@ -1,28 +1,33 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "PcapReader.h"
 
 #include <stdio.h>
-#include <string>
 #include <sys/ioctl.h>
 #include <errno.h>
-#include <math.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <linux/wireless.h>
-#include <termios.h>
+#include <arpa/inet.h>
 #include <netinet/ether.h>
-#include <syslog.h>
+#include <netinet/in.h>
+
+#include <string>
 
 #include "Application.h"
-#include "pkt.h"
-#include "wifi_types.h"
-#include "radiotap.h"
-#include "pdos80211.h"
-extern "C" {
-#include "radiotap_iter.h"
-}
-#include "airodump-ng.h"
 #include "NetworkDiscovery.h"
 #include "HeartbeatMonitor.h"
 #include "WifiMetadata.h"
@@ -103,18 +108,20 @@ PcapReader::Run() {
 
   this->GetMutableContext()->datalink = pcap_datalink(descr);
 
-  bpf_u_int32 net;
+  bpf_u_int32 mask = 0xffffffff;
 
-  bpf_u_int32 mask;
+  if (this->GetContext()->dev) {
+    bpf_u_int32 net;
 
-  pcap_lookupnet(this->GetContext()->dev, &net, &mask, errbuf);
+    pcap_lookupnet(this->GetContext()->dev, &net, &mask, errbuf);
 
-  struct in_addr addr;
+    struct in_addr addr;
 
-  addr.s_addr = net;
+    addr.s_addr = net;
 
-  fprintf(this->GetContext()->out, "Monitoring IP %s on data link %d\n",
-          inet_ntoa(addr), this->GetContext()->datalink);
+    fprintf(this->GetContext()->out, "Monitoring IP %s on data link %d\n",
+            inet_ntoa(addr), this->GetContext()->datalink);
+  }
 
   struct bpf_program filter;
 
@@ -177,12 +184,19 @@ pcap_callback(uint8_t* user, const struct pcap_pkthdr* pkthdr,
     }
   }
 
-  if (context != nullptr && context->datalink == DLT_IEEE802_11_RADIO) {
-    packet_decoder.Decode(&packet, user, &wifiMetadata);
+  if (context && context->datalink == DLT_IEEE802_11_RADIO) {
+    packet_decoder.Decode(&packet, &wifiMetadata);
     PacketLogger::logRadiotap(user, &wifiMetadata);
     PacketLogger::log80211(&packet, user, &wifiMetadata);
 
     NetworkDiscovery* networkDiscovery = context->GetNetworkDiscovery();
+    if (wifiMetadata.bssidPresent) {
+      wifiMetadata.security =
+        networkDiscovery->GetSecurity(&wifiMetadata.bssid);
+    }
+    else {
+      wifiMetadata.security = 0;
+    }
     networkDiscovery->UpdateNetworkResources(&wifiMetadata);
 
     if (networkDiscovery->IsEndNetworkIterator(context->networkIterator) &&

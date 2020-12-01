@@ -9,8 +9,7 @@ struct frame_control;
 
 class PacketDecoder {
 public:
-    void Decode(const Packet* packet, void* user,
-                WifiMetadata* wifiMetadata);
+    void Decode(const Packet* packet, WifiMetadata* wifiMetadata);
 
     static const char* get_ieee80211_type(const struct frame_control* control);
     static const char* get_ieee80211_subtype(const struct frame_control* control);

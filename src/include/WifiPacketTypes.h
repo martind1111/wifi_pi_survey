@@ -1,5 +1,5 @@
-#ifndef _WIFI_TYPES_H
-#define _WIFI_TYPES_H
+#ifndef _WIFI_PACKET_TYPES_H
+#define _WIFI_PACKET_TYPES_H
 
 #define RT_VERSION_LEN 1
 #define RT_LENGTH_LEN 2
@@ -27,4 +27,4 @@ typedef struct frame_control {
   unsigned order : 1;
 } frame_control;
 
-#endif // _WIFI_TYPES_H
+#endif // _WIFI_PACKET_TYPES_H

@@ -64,8 +64,8 @@ int DecodeBeacon(const uint8_t* packet, size_t packetLen,
 int DecodeProbeResp(const uint8_t* packet, size_t packetLen,
                     WifiMetadata *wifiMetadata);
 
-void copy_ether_addr(ether_addr* destAddr,
-                     const ether_addr* srcAddr);
+void CopyEtherAddr(ether_addr* destAddr,
+                   const ether_addr* srcAddr);
 }
 
 using namespace std;
@@ -261,7 +261,6 @@ DecodeIeee80211(const Packet* packet, WifiMetadata* wifiMetadata) {
  * @param packet Pointer to packet instance
  * @param wififMetdata Pointer to the resulting packet metadata
  */
-
 void
 ParseAddresses(const Packet* packet,
                WifiMetadata* wifiMetadata) {
@@ -295,127 +294,127 @@ ParseAddresses(const Packet* packet,
       control->subtype == SUBTYPE_BITFIELD(BLOCKACK_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
       wifiMetadata->raPresent = true;
-      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
+      CopyEtherAddr(&wifiMetadata->ra, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
       wifiMetadata->taPresent = true;
-      copy_ether_addr(&wifiMetadata->ta, &p->addr2);
+      CopyEtherAddr(&wifiMetadata->ta, &p->addr2);
     }
   }
   else if (control->type == 0x01 &&
       control->subtype == SUBTYPE_BITFIELD(PS_POLL_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
       wifiMetadata->bssidPresent = true;
-      copy_ether_addr(&wifiMetadata->bssid, &p->addr1);
+      CopyEtherAddr(&wifiMetadata->bssid, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
       wifiMetadata->raPresent = true;
-      copy_ether_addr(&wifiMetadata->ra, &p->addr2);
+      CopyEtherAddr(&wifiMetadata->ra, &p->addr2);
     }
   }
   else if (control->type == 0x01 &&
            control->subtype == SUBTYPE_BITFIELD(RTS_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
       wifiMetadata->raPresent = true;
-      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
+      CopyEtherAddr(&wifiMetadata->ra, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
       wifiMetadata->taPresent = true;
-      copy_ether_addr(&wifiMetadata->ta, &p->addr2);
+      CopyEtherAddr(&wifiMetadata->ta, &p->addr2);
     }
   }
   else if (control->type == 0x01 &&
            control->subtype == SUBTYPE_BITFIELD(CTS_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
       wifiMetadata->raPresent = true;
-      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
+      CopyEtherAddr(&wifiMetadata->ra, &p->addr1);
     }
   }
   else if (control->type == 0x01 &&
            control->subtype == SUBTYPE_BITFIELD(ACK_TYPE)) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
       wifiMetadata->raPresent = true;
-      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
+      CopyEtherAddr(&wifiMetadata->ra, &p->addr1);
     }
   }
   else if (control->to_ds == 0 && control->from_ds == 0) {
     if (caplen - radiotap_len >= FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
       wifiMetadata->destAddrPresent = true;
-      copy_ether_addr(&wifiMetadata->destAddr, &p->addr1);
+      CopyEtherAddr(&wifiMetadata->destAddr, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
       wifiMetadata->srcAddrPresent = true;
-      copy_ether_addr(&wifiMetadata->srcAddr, &p->addr2);
+      CopyEtherAddr(&wifiMetadata->srcAddr, &p->addr2);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
       wifiMetadata->bssidPresent = true;
-      copy_ether_addr(&wifiMetadata->bssid, &p->addr3);
+      CopyEtherAddr(&wifiMetadata->bssid, &p->addr3);
     }
   }
   else if (control->to_ds == 0 && control->from_ds == 1) {
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
       wifiMetadata->destAddrPresent = true;
-      copy_ether_addr(&wifiMetadata->destAddr, &p->addr1);
+      CopyEtherAddr(&wifiMetadata->destAddr, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
       wifiMetadata->bssidPresent = true;
-      copy_ether_addr(&wifiMetadata->bssid, &p->addr2);
+      CopyEtherAddr(&wifiMetadata->bssid, &p->addr2);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
       wifiMetadata->srcAddrPresent = true;
-      copy_ether_addr(&wifiMetadata->srcAddr, &p->addr3);
+      CopyEtherAddr(&wifiMetadata->srcAddr, &p->addr3);
     }
   }
   else if (control->to_ds == 1 && control->from_ds == 0) {
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
       wifiMetadata->bssidPresent = true;
-      copy_ether_addr(&wifiMetadata->bssid, &p->addr1);
+      CopyEtherAddr(&wifiMetadata->bssid, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
       wifiMetadata->srcAddrPresent = true;
-      copy_ether_addr(&wifiMetadata->srcAddr, &p->addr2);
+      CopyEtherAddr(&wifiMetadata->srcAddr, &p->addr2);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
       wifiMetadata->destAddrPresent = true;
-      copy_ether_addr(&wifiMetadata->destAddr, &p->addr3);
+      CopyEtherAddr(&wifiMetadata->destAddr, &p->addr3);
     }
   }
   else if (control->to_ds == 1 && control->from_ds == 1) {
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + sizeof(struct ether_addr)) {
       wifiMetadata->raPresent = true;
-      copy_ether_addr(&wifiMetadata->ra, &p->addr1);
+      CopyEtherAddr(&wifiMetadata->ra, &p->addr1);
     }
 
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 2 * sizeof(struct ether_addr)) {
       wifiMetadata->taPresent = true;
-      copy_ether_addr(&wifiMetadata->ta, &p->addr2);
+      CopyEtherAddr(&wifiMetadata->ta, &p->addr2);
     }
     if (caplen - radiotap_len >=
         FC_LEN + DUR_LEN + 3 * sizeof(struct ether_addr)) {
       wifiMetadata->destAddrPresent = true;
-      copy_ether_addr(&wifiMetadata->destAddr, &p->addr3);
+      CopyEtherAddr(&wifiMetadata->destAddr, &p->addr3);
     }
   }
 }
@@ -685,8 +684,8 @@ DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
 }
 
 
-void copy_ether_addr(ether_addr* destAddr,
-                     const ether_addr* srcAddr) {
+void CopyEtherAddr(ether_addr* destAddr,
+                   const ether_addr* srcAddr) {
   int i;
 
   for (i = 0; i < ETH_ALEN; i++) {

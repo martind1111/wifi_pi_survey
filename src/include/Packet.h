@@ -1,13 +1,14 @@
 #ifndef _PACKET_H
 #define _PACKET_H
 
+#include <stddef.h>
 #include <stdint.h>
+#include <sys/time.h>
+
+struct pcap_pkthdr;
 
 struct Packet {
-    Packet(const struct pcap_pkthdr* pkthdr, const uint8_t* packet_data) :
-        data(packet_data),
-        length(pkthdr->len), capture_length(pkthdr->caplen),
-        timestamp(pkthdr->ts) { }
+    Packet(const pcap_pkthdr* pkthdr, const uint8_t* packet_data);
 
     const uint8_t* GetData() const { return data; }
     size_t GetLength() const { return length; }

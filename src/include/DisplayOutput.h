@@ -69,7 +69,7 @@ void* DisplayMenu(void* context);
 
 class DisplayOutput : Worker {
 public:
-    DisplayOutput(ApplicationContext* context) : Worker(context) { }
+    DisplayOutput(ApplicationContext* context) : Worker(context), x(0), y(0) { }
 
     void Run() override;
 
@@ -79,7 +79,7 @@ private:
     void SetLed(int reg, bool state);
     void ClearScreen();
     void PrintLine(const char* line);
-    void OutputLcd(const char* line, bool lineFeed);
+    void OutputLcd(const char* line, bool line_feed);
     bool IsLcdReset();
     void ClearLcdReset();
     void LcdMoveCursor(int row, int column);
@@ -108,6 +108,9 @@ private:
     ClientDetailState_t clientDetailState;
 
     bool filter;
+
+    uint32_t x;
+    uint32_t y;
 };
 
 #endif // _DISPLAY_OUTPUT_H

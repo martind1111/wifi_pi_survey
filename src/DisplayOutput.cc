@@ -15,7 +15,6 @@
 #include "DisplayOutput.h"
 
 #include <stdio.h>
-#include <math.h>
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <math.h>
@@ -26,13 +25,13 @@
 #include <termios.h>
 #include <syslog.h>
 #include <netinet/ether.h>
+#include <curses.h>
+#include <wiringPiI2C.h>
 
 #include <string>
 #include <sstream>
-
 #include <fmt/core.h>
 #include <fmt/chrono.h>
-#include "wiringPiI2C.h"
 
 #include "airodump-ng.h"
 #include "pkt.h"
@@ -113,8 +112,7 @@ DisplayOutput::Run() {
   i2c_oper = IsI2cOperational();
 
   if (!i2c_oper) {
-    string errStr =
-      fmt::format("I2C failure: Disabling interactions with IgORE board");
+    string errStr = "I2C failure: Disabling interactions with IgORE board";
 
     syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
 
@@ -132,6 +130,11 @@ DisplayOutput::Run() {
   lastZone3.str("");
   lastZone4.str("");
   lastZone5.str("");
+
+  if (this->GetContext()->interactive) {
+    initscr();
+    cbreak();
+  }
 
   ClearScreen();
 
@@ -260,7 +263,7 @@ DisplayOutput::Run() {
           break;
         case DETAIL_NET_PACKET_COUNT:
           packetStr =
-            fmt::format("Packets: {<10d}", networkInfo.packetCount);
+            fmt::format("Packets: {:<10d}", networkInfo.packetCount);
           zone4 << packetStr.substr(0, MAX_LINE_LENGTH);
           break;
         case DETAIL_NET_LOCATION:
@@ -389,6 +392,7 @@ DisplayOutput::Run() {
       PrintLine(zone6.str().c_str());
     }
 
+#if 0
     if (this->GetContext()->interactive &&
         (zone1.str().compare(lastZone1.str()) != 0 ||
          zone2.str().compare(lastZone2.str()) != 0 ||
@@ -413,6 +417,7 @@ DisplayOutput::Run() {
                 zone5.str().c_str(), zone6.str().c_str());
       }
     }
+#endif
 
     lastZone1.str(zone1.str());
     lastZone2.str(zone2.str());
@@ -435,7 +440,7 @@ DisplayOutput::Run() {
     }
 
     if (status != BUTTON_STATUS_SHORT && status != BUTTON_STATUS_LONG) {
-      if  (this->GetContext()->interactive) {
+      if (this->GetContext()->interactive) {
         int status = WaitForKeyboardInput(1);
 
         if (status != 1) {
@@ -549,8 +554,6 @@ DisplayOutput::IsI2cOperational() {
 
 int
 DisplayOutput::GetButton() {
-  char errStr[80];
-
   if (!i2c_oper) {
     return 0;
   }
@@ -607,11 +610,20 @@ DisplayOutput::ClearScreen() {
   str[1] = '\0';
 
   OutputLcd(str, false);
+
+  if (this->GetContext()->interactive) {
+    clear();
+  }
 }
 
 void
 DisplayOutput::PrintLine(const char* line) {
   OutputLcd(line, false);
+
+  if (this->GetContext()->interactive) {
+    mvaddstr(y, x, line);
+    refresh();
+  }
 }
 
 bool
@@ -634,7 +646,7 @@ DisplayOutput::IsLcdReset() {
 
   if (regValue != 0) {
     if (this->GetContext()->debugLcdDisplay) {
-      string debugStr = fmt::format("LCD Display: Detected reset");
+      string debugStr = "LCD Display: Detected reset";
 
       syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
     }
@@ -664,7 +676,7 @@ DisplayOutput::ClearLcdReset() {
   }
 
   if (this->GetContext()->debugLcdDisplay) {
-    string debugStr = fmt::format("LCD Display: Clear");
+    string debugStr = "LCD Display: Clear";
 
     syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
   }
@@ -672,6 +684,9 @@ DisplayOutput::ClearLcdReset() {
 
 void
 DisplayOutput::LcdMoveCursor(int row, int column) {
+  y = row;
+  x = column;
+
   if (!i2c_oper) {
     return;
   }
@@ -697,7 +712,25 @@ DisplayOutput::LcdMoveCursor(int row, int column) {
 }
 
 void
-DisplayOutput::OutputLcd(const char* line, bool lineFeed) {
+DisplayOutput::OutputLcd(const char* line, bool line_feed) {
+  int len = strlen(line);
+
+  if (len > LCD_SIZE - 1) {
+    len = LCD_SIZE - 1;
+  }
+
+  if (this->GetContext()->interactive) {
+    string str = line;
+
+    mvaddstr(y, x, str.substr(0, len).c_str());
+    refresh();
+
+    if (line_feed) {
+      y += 1;
+      x = 0;
+    }
+  }
+  
   if (!i2c_oper) {
     return;
   }
@@ -710,12 +743,7 @@ DisplayOutput::OutputLcd(const char* line, bool lineFeed) {
 
   ostringstream cmd;
   string str;
-  int len = strlen(line);
   int i;
-
-  if (len > LCD_SIZE - 1) {
-    len = LCD_SIZE - 1;
-  }
 
   cmd << fmt::format("sudo i2cset -y 1 0x{:02x} 0x{:02x} ", DEVICE_ADDRESS,
                      REG_LCD);
@@ -725,7 +753,7 @@ DisplayOutput::OutputLcd(const char* line, bool lineFeed) {
     cmd << str;
   }
 
-  if (lineFeed) {
+  if (line_feed) {
     cmd << "0x0a ";
   }
 
@@ -929,6 +957,10 @@ DisplayOutput::ChooseNextClientDetail() {
 
 void
 DisplayOutput::EchoOff() {
+  if (this->GetContext()->interactive) {
+    noecho();
+  }
+
   // Define a terminal configuration data structure
   struct termios term;
 
@@ -942,11 +974,15 @@ DisplayOutput::EchoOff() {
   term.c_lflag &= ~ECHO;
 
   // Set the terminal configuration for stdin according to term, now
-  tcsetattr( fileno(stdin), TCSANOW, &term);
+  tcsetattr(fileno(stdin), TCSANOW, &term);
 }
 
 void
 DisplayOutput::EchoOn() {
+  if (this->GetContext()->interactive) {
+    endwin();
+  }
+
   // Define a terminal configuration data structure
   struct termios term;
 
@@ -959,8 +995,8 @@ DisplayOutput::EchoOn() {
   // Turn on screen echo in term
   term.c_lflag |= ECHO;
 
-  // Set the terminal configuration for stdin according to term, now
-  tcsetattr( fileno(stdin), TCSANOW, &term);
+  // Set the terminal configuration for stdin according to term, now.
+  tcsetattr(fileno(stdin), TCSANOW, &term);
 }
 
 void

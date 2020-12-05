@@ -37,7 +37,7 @@ option(ENABLE_TESTING "Enable Test Builds" ON)
 include(cmake/AddGoogleTest.cmake)
 
 # Common libs
-#find_package(Boost REQUIRED filesystem)
+find_package(Boost REQUIRED filesystem)
 
 SET (PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
 SET (PROJECT_SOURCE_DIR "${PROJECT_SOURCE_DIR}/src")

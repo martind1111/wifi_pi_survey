@@ -3,10 +3,12 @@
 
 #include <string>
 #include <list>
+#include <vector>
 #include <memory>
 
 #include "Worker.h"
 #include "I2cController.h"
+#include "NetworkDiscovery.h"
 
 typedef enum {
   MENU_NETWORKS,
@@ -71,6 +73,7 @@ void* UserAgentRunner(void* context);
 class ApplicationContext;
 class Display;
 class LcdDisplay;
+class NetworkDiscovery;
 
 using DisplayPtr = std::shared_ptr<Display>;
 
@@ -94,7 +97,20 @@ private:
     void EchoOff();
     LcdDisplay* GetLcdDisplay();
 
+    void ExecuteNetworkMenu(NetworkDiscovery* networkDiscovery,
+                            const NetworkInfo_t& networkInfo,
+                            uint32_t networkCountSnapshot,
+                            const std::string& currentNetworkSnapshot,
+                            std::string& currentClientSnapshot,
+                            std::vector<std::string>& zones);
+    void ExecuteClientMenu(NetworkDiscovery* networkDiscovery,
+                           const std::string& currentClientSnapshot,
+                           const std::string& currentNetworkSnapshot,
+                           std::vector<std::string>& zones);
+    void ExecuteGpsMenu(std::vector<std::string>& zones);
     void ExecuteCurrentCommand(Command& currentCommand);
+    void RenderDisplay(const std::vector<std::string>& zones,
+                       const std::vector<std::string>& lastZones);
     void ChooseNextCommand(Command& currentCommand);
     void ChooseNextNetwork();
     bool ChooseNextClient();

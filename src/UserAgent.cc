@@ -48,6 +48,15 @@ extern "C" {
 #include "DisplayFactory.h"
 #include "I2cController.h"
 
+static const size_t ZONE_COUNT = 6;
+
+static const size_t ZONE_MAIN = 0;
+static const size_t ZONE_SECURITY = 1;
+static const size_t ZONE_NET_COUNT = 2;
+static const size_t ZONE_DETAILS_1 = 3;
+static const size_t ZONE_DETAILS_2 = 4;
+static const size_t ZONE_COMMAND = 5;
+
 using namespace std;
 
 namespace {
@@ -64,6 +73,157 @@ UserAgentRunner(void* context) {
     userAgent.Run();
 
     return nullptr;
+}
+
+void
+UserAgent::ExecuteNetworkMenu(NetworkDiscovery* networkDiscovery,
+                              const NetworkInfo_t& networkInfo,
+                              uint32_t networkCountSnapshot,
+                              const string& currentNetworkSnapshot,
+                              string& currentClientSnapshot,
+                              vector<string>& zones) {
+  if (networkInfo.ssid.size() > 16) {
+    zones[ZONE_MAIN] = fmt::format("{}...", networkInfo.ssid.substr(0, 13));
+  }
+  else {
+    zones[ZONE_MAIN] = networkInfo.ssid;
+  }
+
+  zones[ZONE_SECURITY] = OutputHelper::GetSecurityString(networkInfo.security);
+  if (networkCountSnapshot < 100) {
+      zones[ZONE_NET_COUNT] = fmt::format("{}", networkCountSnapshot);
+  }
+  else {
+      zones[ZONE_NET_COUNT] = fmt::format("*{}", (networkCountSnapshot % 10));
+  }
+
+  if (menuState == MENU_NETWORKS) {
+    zones[ZONE_DETAILS_1] = currentNetworkSnapshot;
+    const char* signalStr = 
+      networkDiscovery->GetBestClientSignal(currentNetworkSnapshot);
+    if (signalStr != nullptr) {
+      zones[ZONE_DETAILS_2] = signalStr;
+    }
+  }
+  else if (menuState == MENU_NETWORK_DETAILS) {
+    string timeStr;
+    string channelStr;
+    string packetStr;
+    string locationStr;
+    switch(networkDetailState) {
+    case DETAIL_NET_MANUFACTURER:
+      {
+        struct ether_addr* addr =
+          ether_aton(currentNetworkSnapshot.c_str());
+        zones[ZONE_DETAILS_1] = HardwareHelper::GetManufacturer(addr);
+      }
+      break;
+    case DETAIL_NET_FIRST_SEEN:
+      {
+        timeStr = fmt::format("F: {:%Y-%m-%d %H:%M:%S}",
+                              fmt::localtime(networkInfo.firstSeen));
+        zones[ZONE_DETAILS_1] = timeStr.substr(0, MAX_LINE_LENGTH);
+      }
+      break;
+    case DETAIL_NET_LAST_SEEN:
+      {
+        timeStr = fmt::format("L: {:%Y-%m-%d %H:%M:%S}",
+                              fmt::localtime(networkInfo.lastSeen));
+        zones[ZONE_DETAILS_1] = timeStr.substr(0, MAX_LINE_LENGTH);
+      }
+      break;
+    case DETAIL_NET_CHANNEL:
+      channelStr = fmt::format("Channel: {:<3d}", networkInfo.channel);
+      zones[ZONE_DETAILS_1] = channelStr.substr(0, MAX_LINE_LENGTH);
+      break;
+    case DETAIL_NET_PACKET_COUNT:
+      packetStr = fmt::format("Packets: {:<10d}", networkInfo.packetCount);
+      zones[ZONE_DETAILS_1] = packetStr.substr(0, MAX_LINE_LENGTH);
+      break;
+    case DETAIL_NET_LOCATION:
+      locationStr = GetLocationString(networkInfo.location.latitude,
+                                      networkInfo.location.longitude);
+      zones[ZONE_DETAILS_1] = locationStr.substr(0, MAX_LINE_LENGTH);
+      break;
+    case DETAIL_NET_CLIENTS:
+      if (currentClientSnapshot.empty()) {
+        ChooseNextClient();
+        currentClientSnapshot = currentClient;
+      }
+
+      zones[ZONE_DETAILS_1] = currentClientSnapshot;
+      break;
+    }
+  }
+}
+
+void
+UserAgent::ExecuteGpsMenu(vector<string>& zones) {
+  double latitude = this->GetContext()->lastLocation.latitude;
+  double longitude = this->GetContext()->lastLocation.longitude;
+
+  const string& locationStr = GetLocationString(latitude, longitude);
+  zones[ZONE_MAIN] = locationStr.substr(0, MAX_LINE_LENGTH);
+
+  string distanceStr =
+    fmt::format("Distance: {:.3f}", this->GetContext()->totalDistance);
+  zones[ZONE_DETAILS_1] = distanceStr.substr(0, MAX_LINE_LENGTH);
+}
+
+void
+UserAgent::ExecuteClientMenu(NetworkDiscovery* networkDiscovery,
+                             const std::string& currentClientSnapshot,
+                             const std::string& currentNetworkSnapshot,
+                             vector<string>& zones) {
+  zones[ZONE_MAIN] = currentClientSnapshot;
+
+  ClientInfo_t client;
+  bool clientFound = networkDiscovery->GetClient(currentNetworkSnapshot,
+                                                 currentClientSnapshot,
+                                                 client);
+
+  string timeStr;
+  string packetStr;
+  switch(clientDetailState) {
+  case DETAIL_CLIENT_MANUFACTURER:
+    {
+      struct ether_addr *addr =
+        ether_aton(currentClientSnapshot.c_str());
+      zones[ZONE_DETAILS_1] = HardwareHelper::GetManufacturer(addr);
+    }
+    break;
+  case DETAIL_CLIENT_FIRST_SEEN:
+    {
+      timeStr = fmt::format("F: {:%Y-%m-%d %H:%M:%s}",
+                            fmt::localtime(client.firstSeen));
+      zones[ZONE_DETAILS_1] = timeStr.substr(0, MAX_LINE_LENGTH);
+    }
+    break;
+  case DETAIL_CLIENT_LAST_SEEN:
+    {
+      timeStr = fmt::format("L: {:%Y-%m-%d %H:%M:%S}",
+                            fmt::localtime(client.lastSeen));
+      zones[ZONE_DETAILS_1] = timeStr.substr(0, MAX_LINE_LENGTH);
+    }
+    break;
+  case DETAIL_CLIENT_PACKET_COUNT:
+    packetStr = fmt::format("Packets: {:<10d}", client.packetCount);
+    zones[ZONE_DETAILS_1] = packetStr.substr(0, MAX_LINE_LENGTH);
+    break;
+  case DETAIL_CLIENT_SIGNAL_NOISE:
+    zones[ZONE_DETAILS_1] =
+      fmt::format("{}{}{}{}{}",
+                  (client.dbmSignal != 0 ? "Signal: " : ""),
+                  (client.dbmSignal != 0 ?
+                     to_string(static_cast<int32_t>(client.dbmSignal)) : ""),
+                  (client.dbmSignal != 0 ? " " : ""),
+                  (client.dbmNoise != 0 ? "Noise: " : ""),
+                  (client.dbmNoise != 0 ?
+                     to_string(static_cast<int32_t>(client.dbmNoise)) : ""));
+    break;
+  default:
+    break;
+  }
 }
 
 void
@@ -140,15 +300,91 @@ UserAgent::ExecuteCurrentCommand(Command& currentCommand) {
   }
 }
 
+void UserAgent::RenderDisplay(const vector<string>& zones,
+                              const vector<string>& lastZones) {
+  char line[MAX_LINE_LENGTH + 2];
+
+  if (zones[ZONE_SECURITY] != lastZones[ZONE_SECURITY]) {
+    MoveCursor(0, 17);
+    sprintf(line, "%-5s", zones[ZONE_SECURITY].c_str());
+    PrintLine(line);
+  }
+
+  if (zones[ZONE_NET_COUNT] != lastZones[ZONE_NET_COUNT]) {
+    MoveCursor(0, 22);
+    sprintf(line, "%2s", zones[ZONE_NET_COUNT].c_str());
+    PrintLine(line);
+  }
+
+  if (zones[ZONE_MAIN] != lastZones[ZONE_MAIN]) {
+    MoveCursor(0, 0);
+    if (zones[ZONE_SECURITY].empty()) {
+      sprintf(line, "%-24s", zones[ZONE_MAIN].c_str());
+    }
+    else {
+      sprintf(line, "%-17s", zones[ZONE_MAIN].c_str());
+    }
+    PrintLine(line);
+  }
+
+  if (zones[ZONE_DETAILS_2] != lastZones[ZONE_DETAILS_2]) {
+    MoveCursor(1, 18);
+    sprintf(line, "%-3s", zones[ZONE_DETAILS_2].c_str());
+    PrintLine(line);
+  }
+
+  if (zones[ZONE_DETAILS_1] != lastZones[ZONE_DETAILS_1]) {
+    MoveCursor(1, 0);
+    if (zones[ZONE_DETAILS_2].empty()) {
+      sprintf(line, "%-23s", zones[ZONE_DETAILS_1].c_str());
+    }
+    else {
+      sprintf(line, "%-18s", zones[ZONE_DETAILS_1].c_str());
+    }
+
+    PrintLine(line);
+  }
+
+  if (zones[ZONE_COMMAND] != lastZones[ZONE_COMMAND]) {
+    MoveCursor(1, 23);
+    PrintLine(zones[ZONE_COMMAND].c_str());
+  }
+
+#if DEBUG
+  if (zones[ZONE_MAIN] != lastZones[ZONE_MAIN] ||
+      zones[ZONE_SECURITY] != lastZones[ZONE_SECURITY] ||
+      zones[ZONE_NET_COUNT] != lastZones[ZONE_NET_COUNT] ||
+      zones[ZONE_DETAILS_1] != lastZones[ZONE_DETAILS_1] ||
+      zones[ZONE_DETAILS_LONG] != lastZones[ZONE_DETAILS_LONG] ||
+      zones[ZONE_COMMAND] != lastZones[ZONE_COMMAND]) {
+    if (zones[ZONE_SECURITY].empty()) {
+      fprintf(stdout, "%-21s %2s\n", zones[ZONE_MAIN].c_str(),
+              zones[ZONE_NET_COUNT].c_str());
+    }
+    else {
+      fprintf(stdout, "%-16s %-4s %2s\n", zones[ZONE_MAIN].c_str(),
+              zones[ZONE_SECURITY].c_str(), zones[ZONE_NET_COUNT].c_str());
+    }
+
+    if (zones[ZONE_DETAILS_2].empty()) {
+      fprintf(stdout, "%-23s%1s\n", zones[ZONE_DETAILS_1].c_str(),
+              zones[ZONE_COMMAND].c_str());
+    }
+    else {
+      fprintf(stdout, "%-18s %-3s %1s\n", zones[ZONE_DETAILS_1].c_str(),
+              zones[ZONE_DETAILS_2].c_str(), zones[ZONE_COMMAND].c_str());
+    }
+  }
+#endif
+}
+
 void
 UserAgent::Run() {
-  char line[MAX_LINE_LENGTH + 2];
   bool lastLedOpenState;
   bool lastLedWepState;
   bool lastLedWpaState;
-  ostringstream lastZone1, lastZone2, lastZone3, lastZone4, lastZone5,
-    lastZone6;
-  ostringstream zone1, zone2, zone3, zone4, zone5, zone6;
+  vector<string> lastZones(ZONE_COUNT);
+  vector<string> zones(ZONE_COUNT);
 
   menuState = MENU_NETWORKS;
   Command currentCommand = COMMAND_NEXT;
@@ -180,11 +416,9 @@ UserAgent::Run() {
   SetLed(REG_EXT2_LED, lastLedWepState);
   SetLed(REG_EXT1_LED, lastLedWpaState);
 
-  lastZone1.str("");
-  lastZone2.str("");
-  lastZone3.str("");
-  lastZone4.str("");
-  lastZone5.str("");
+  for (auto& lastZone : lastZones) {
+    lastZone = "";
+  }
 
   InitDisplay(&i2cController);
 
@@ -198,11 +432,9 @@ UserAgent::Run() {
     this->GetMutableContext()->ReportActivity(ACTIVITY_DISPLAY_MENU);
 
     if (IsLcdReset()) {
-      lastZone1.str("");
-      lastZone2.str("");
-      lastZone3.str("");
-      lastZone4.str("");
-      lastZone5.str("");
+      for (auto& lastZone : lastZones) {
+        lastZone = "";
+      }
       Reset();
       ClearScreen();
     }
@@ -241,14 +473,11 @@ UserAgent::Run() {
 
     lastLedWpaState = ledWpaState;
 
-    zone1.str("");
-    zone2.str("");
-    zone3.str("");
-    zone4.str("");
-    zone5.str("");
-    zone6.str("");
+    for (auto& zone : zones) {
+      zone = "";
+    }
 
-    zone6 << GetCommandString(currentCommand);
+    zones[ZONE_COMMAND] = GetCommandString(currentCommand);
 
     NetworkInfo_t networkInfo;
     bool networkFound = networkDiscovery->GetNetwork(currentNetworkSnapshot,
@@ -256,226 +485,28 @@ UserAgent::Run() {
 
     if ((menuState == MENU_NETWORKS || menuState == MENU_NETWORK_DETAILS) &&
         !networkFound) {
-        zone3 << networkCountSnapshot;
+        zones[ZONE_NET_COUNT] = networkCountSnapshot;
     }
     else if (menuState == MENU_NETWORKS || menuState == MENU_NETWORK_DETAILS) {
-      if (networkInfo.ssid.size() > 16) {
-        zone1 << networkInfo.ssid.substr(0, 13) << "...";
-      }
-      else {
-        zone1 << networkInfo.ssid;
-      }
-
-      zone2 << OutputHelper::GetSecurityString(networkInfo.security);
-      if (networkCountSnapshot < 100) {
-          zone3 << networkCountSnapshot;
-      }
-      else {
-          zone3 << "*" << (networkCountSnapshot % 10);
-      }
-
-      if (menuState == MENU_NETWORKS) {
-        zone4 << currentNetworkSnapshot;
-        const char* signalStr = 
-          networkDiscovery->GetBestClientSignal(currentNetworkSnapshot);
-        if (signalStr != NULL) {
-          zone5 << signalStr;
-        }
-      }
-      else if (menuState == MENU_NETWORK_DETAILS) {
-        string timeStr;
-        string channelStr;
-        string packetStr;
-        string locationStr;
-        switch(networkDetailState) {
-        case DETAIL_NET_MANUFACTURER:
-          {
-            struct ether_addr* addr =
-              ether_aton(currentNetworkSnapshot.c_str());
-            zone4 << HardwareHelper::GetManufacturer(addr);
-          }
-          break;
-        case DETAIL_NET_FIRST_SEEN:
-          {
-            timeStr = fmt::format("F: {:%Y-%m-%d %H:%M:%S}",
-                                  fmt::localtime(networkInfo.firstSeen));
-            zone4 << timeStr.substr(0, MAX_LINE_LENGTH);
-          }
-          break;
-        case DETAIL_NET_LAST_SEEN:
-          {
-            timeStr = fmt::format("L: {:%Y-%m-%d %H:%M:%S}",
-                                  fmt::localtime(networkInfo.lastSeen));
-            zone4 << timeStr.substr(0, MAX_LINE_LENGTH);
-          }
-          break;
-        case DETAIL_NET_CHANNEL:
-          channelStr = fmt::format("Channel: {:<3d}", networkInfo.channel);
-          zone4 << channelStr.substr(0, MAX_LINE_LENGTH);
-          break;
-        case DETAIL_NET_PACKET_COUNT:
-          packetStr =
-            fmt::format("Packets: {:<10d}", networkInfo.packetCount);
-          zone4 << packetStr.substr(0, MAX_LINE_LENGTH);
-          break;
-        case DETAIL_NET_LOCATION:
-          locationStr = GetLocationString(networkInfo.location.latitude,
-                                          networkInfo.location.longitude);
-          zone4 << locationStr.substr(0, MAX_LINE_LENGTH);
-          break;
-        case DETAIL_NET_CLIENTS:
-          if (currentClientSnapshot.empty()) {
-            ChooseNextClient();
-            currentClientSnapshot = currentClient;
-          }
-
-          zone4 << currentClientSnapshot;
-          break;
-        }
-      }
+        ExecuteNetworkMenu(networkDiscovery, networkInfo,
+                           networkCountSnapshot, currentNetworkSnapshot,
+                           currentClientSnapshot, zones);
     }
 
     if (menuState == MENU_CLIENT_DETAILS) {
-      zone1 << currentClientSnapshot.c_str();
-
-      ClientInfo_t client;
-      bool clientFound = networkDiscovery->GetClient(currentNetworkSnapshot,
-                                                     currentClientSnapshot,
-                                                     client);
-
-      string timeStr;
-      string packetStr;
-      switch(clientDetailState) {
-      case DETAIL_CLIENT_MANUFACTURER:
-        {
-          struct ether_addr *addr =
-            ether_aton(currentClientSnapshot.c_str());
-          zone4 << HardwareHelper::GetManufacturer(addr);
-        }
-        break;
-      case DETAIL_CLIENT_FIRST_SEEN:
-        {
-          timeStr = fmt::format("F: {:%Y-%m-%d %H:%M:%s}",
-                                fmt::localtime(client.firstSeen));
-          zone4 << timeStr.substr(0, MAX_LINE_LENGTH);
-        }
-        break;
-      case DETAIL_CLIENT_LAST_SEEN:
-        {
-          timeStr = fmt::format("L: {:%Y-%m-%d %H:%M:%S}",
-                                fmt::localtime(client.lastSeen));
-          zone4 << timeStr.substr(0, MAX_LINE_LENGTH);
-        }
-        break;
-      case DETAIL_CLIENT_PACKET_COUNT:
-        packetStr = fmt::format("Packets: {:<10d}", client.packetCount);
-        zone4 << packetStr.substr(0, MAX_LINE_LENGTH);
-        break;
-      case DETAIL_CLIENT_SIGNAL_NOISE:
-        if (client.dbmSignal != 0) {
-          zone4 << "Signal: " << ((int32_t) client.dbmSignal) << " ";
-        }
-        if (client.dbmNoise != 0) {
-          zone4 << "Noise: " <<  ((int32_t) client.dbmNoise);
-        }
-        break;
-      default:
-        break;
-      }
+      ExecuteClientMenu(networkDiscovery, currentClientSnapshot,
+                        currentNetworkSnapshot, zones);
     }
 
     if (menuState == MENU_GPS) {
-      double latitude, longitude;
-
-      latitude = this->GetContext()->lastLocation.latitude;
-      longitude = this->GetContext()->lastLocation.longitude;
-
-      const string& locationStr = GetLocationString(latitude, longitude);
-      zone1 << locationStr.substr(0, MAX_LINE_LENGTH);
-
-      string distanceStr =
-        fmt::format("Distance: {:.3f}", this->GetContext()->totalDistance);
-      zone4 << distanceStr.substr(0, MAX_LINE_LENGTH);
+      ExecuteGpsMenu(zones);
     }
 
-    if (zone2.str() != lastZone2.str()) {
-      MoveCursor(0, 17);
-      sprintf(line, "%-5s", zone2.str().c_str());
-      PrintLine(line);
+    RenderDisplay(zones, lastZones);
+
+    for (size_t i = 0; i < zones.size(); ++i) {
+      lastZones[i] = zones[i];
     }
-
-    if (zone3.str() != lastZone3.str()) {
-      MoveCursor(0, 22);
-      sprintf(line, "%2s", zone3.str().c_str());
-      PrintLine(line);
-    }
-
-    if (zone1.str() != lastZone1.str()) {
-      MoveCursor(0, 0);
-      if (zone2.str().empty()) {
-        sprintf(line, "%-24s", zone1.str().c_str());
-      }
-      else {
-        sprintf(line, "%-17s", zone1.str().c_str());
-      }
-      PrintLine(line);
-    }
-
-    if (zone5.str() != lastZone5.str()) {
-      MoveCursor(1, 18);
-      sprintf(line, "%-3s", zone5.str().c_str());
-      PrintLine(line);
-    }
-
-    if (zone4.str() != lastZone4.str()) {
-      MoveCursor(1, 0);
-      if (zone5.str().empty()) {
-        sprintf(line, "%-23s", zone4.str().c_str());
-      }
-      else {
-        sprintf(line, "%-18s", zone4.str().c_str());
-      }
-
-      PrintLine(line);
-    }
-
-    if (zone6.str() != lastZone6.str()) {
-      MoveCursor(1, 23);
-      PrintLine(zone6.str().c_str());
-    }
-
-#if DEBUG
-    if (zone1.str() != lastZone1.str() ||
-        zone2.str() != lastZone2.str() ||
-        zone3.str() != lastZone3.str() ||
-        zone4.str() != lastZone4.str() ||
-        zone5.str() != lastZone5.str() ||
-        zone6.str() != lastZone6.str()) {
-      if (zone2.str().empty()) {
-        fprintf(stdout, "%-21s %2s\n", zone1.str().c_str(),
-                zone3.str().c_str());
-      }
-      else {
-        fprintf(stdout, "%-16s %-4s %2s\n", zone1.str().c_str(),
-                zone2.str().c_str(), zone3.str().c_str());
-      }
-
-      if (zone5.str().empty()) {
-        fprintf(stdout, "%-23s%1s\n", zone4.str().c_str(), zone6.str().c_str());
-      }
-      else {
-        fprintf(stdout, "%-18s %-3s %1s\n", zone4.str().c_str(),
-                zone5.str().c_str(), zone6.str().c_str());
-      }
-    }
-#endif
-
-    lastZone1.str(zone1.str());
-    lastZone2.str(zone2.str());
-    lastZone3.str(zone3.str());
-    lastZone4.str(zone4.str());
-    lastZone5.str(zone5.str());
-    lastZone6.str(zone6.str());
 
     EchoOff();
 

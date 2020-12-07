@@ -43,8 +43,8 @@ void ConsoleDisplay::Print(const char* line, bool line_feed) {
 }
 
 void ConsoleDisplay::MoveCursor(int row, int column) {
-    x = row;
-    y = column;
+    y = row;
+    x = column;
 }
 
 void ConsoleDisplay::EchoOn() {

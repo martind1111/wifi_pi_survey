@@ -48,7 +48,7 @@ void pcap_callback(uint8_t *user, const struct pcap_pkthdr* pkthdr,
 }
 
 void *
-MonitorPcap(void* context) {
+PcapReaderRunner(void* context) {
   ApplicationContext* appContext =
     reinterpret_cast<ApplicationContext*>(context);
   PcapReader* reader = PcapReaderFactory::MakePcapReader(appContext);

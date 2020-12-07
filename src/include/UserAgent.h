@@ -1,11 +1,12 @@
-#ifndef _DISPLAY_OUTPUT_H
-#define _DISPLAY_OUTPUT_H
+#ifndef _USER_AGENT_H
+#define _USER_AGENT_H
 
 #include <string>
+#include <list>
+#include <memory>
 
 #include "Worker.h"
-
-class ApplicationContext;
+#include "I2cController.h"
 
 typedef enum {
   MENU_NETWORKS,
@@ -14,7 +15,7 @@ typedef enum {
   MENU_GPS
 } MenuState_t;
 
-typedef enum {
+enum Command {
   COMMAND_NEXT,
   COMMAND_BACK,
   COMMAND_ZOOM_IN,
@@ -25,7 +26,7 @@ typedef enum {
   COMMAND_RESET,
   COMMAND_GPS,
   COMMAND_WIFI
-} Command_t;
+};
 
 typedef enum {
   DETAIL_NET_MANUFACTURER,
@@ -65,41 +66,44 @@ operator++(ClientDetailState_t& cs, int) {
   return prev;
 }
 
-void* DisplayMenu(void* context);
+void* UserAgentRunner(void* context);
 
-class DisplayOutput : Worker {
+class ApplicationContext;
+class Display;
+class LcdDisplay;
+
+using DisplayPtr = std::shared_ptr<Display>;
+
+class UserAgent : Worker {
 public:
-    DisplayOutput(ApplicationContext* context) : Worker(context), x(0), y(0) { }
+    UserAgent(ApplicationContext* context) : Worker(context) { }
 
     void Run() override;
 
 private:
-    bool IsI2cOperational();
     int GetButton();
     void SetLed(int reg, bool state);
+    void InitDisplay(const I2cController* i2cController);
     void ClearScreen();
     void PrintLine(const char* line);
-    void OutputLcd(const char* line, bool line_feed);
+    void Print(const char* line, bool line_feed);
     bool IsLcdReset();
-    void ClearLcdReset();
-    void LcdMoveCursor(int row, int column);
-
-    void ChooseNextCommand();
-    void ChooseNextNetwork();
-    bool ChooseNextClient();
+    void Reset();
+    void MoveCursor(int row, int column);
     void EchoOn();
     void EchoOff();
+    LcdDisplay* GetLcdDisplay();
+
+    void ExecuteCurrentCommand(Command& currentCommand);
+    void ChooseNextCommand(Command& currentCommand);
+    void ChooseNextNetwork();
+    bool ChooseNextClient();
     void ChooseNextNetworkDetail();
     void ChooseNextClientDetail();
     void ResetNetworks();
     void ApplyFilter();
 
-    bool i2c_oper;
-    int i2c_fd;
-
     MenuState_t menuState;
-
-    Command_t currentCommand;
 
     std::string currentClient;
 
@@ -109,8 +113,9 @@ private:
 
     bool filter;
 
-    uint32_t x;
-    uint32_t y;
+    I2cController i2cController;
+
+    std::list<DisplayPtr> displays;
 };
 
-#endif // _DISPLAY_OUTPUT_H
+#endif // _USER_AGENT_H

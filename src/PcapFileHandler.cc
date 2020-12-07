@@ -1,8 +1,8 @@
-#include "FilePcapHandler.h"
+#include "PcapFileHandler.h"
 
 #include <pcap/pcap.h>
 
-bool FilePcapHandler::Open() {
+bool PcapFileHandler::Open() {
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_handle = pcap_open_offline(file_name.c_str(), errbuf);
 

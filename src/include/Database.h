@@ -3,7 +3,7 @@
 
 #include "Worker.h"
 
-void* JournalWirelessInformation(void* ctx);
+void* DatabaseRunner(void* ctx);
 
 class Database : Worker {
 public:

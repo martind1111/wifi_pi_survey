@@ -9,7 +9,7 @@
 #include "PacketDecoder.h"
 #include "WifiMetadata.h"
 #include "TestHelper.h"
-#include "FilePcapHandler.h"
+#include "PcapFileHandler.h"
 
 using namespace std;
 
@@ -18,7 +18,7 @@ TEST(PacketDecoderTest, DecodeBeacon) {
     string input_pcap = TestHelper::ResolvePath("tests/data/beacon.pcap");
     PacketDecoder decoder;
     WifiMetadata wifiMetadata;
-    FilePcapHandler pcap_handler(input_pcap);
+    PcapFileHandler pcap_handler(input_pcap);
 
     pcap_handler.Open();
 
@@ -73,7 +73,7 @@ TEST(PacketDecoderTest, DecodeProbeRequest) {
         TestHelper::ResolvePath("tests/data/probe_request.pcap");
     PacketDecoder decoder;
     WifiMetadata wifiMetadata;
-    FilePcapHandler pcap_handler(input_pcap);
+    PcapFileHandler pcap_handler(input_pcap);
 
     pcap_handler.Open();
 
@@ -126,7 +126,7 @@ TEST(PacketDecoderTest, DecodeProbeResponse) {
         TestHelper::ResolvePath("tests/data/probe_response.pcap");
     PacketDecoder decoder;
     WifiMetadata wifiMetadata;
-    FilePcapHandler pcap_handler(input_pcap);
+    PcapFileHandler pcap_handler(input_pcap);
 
     pcap_handler.Open();
 

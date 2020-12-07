@@ -12,7 +12,7 @@
  * limitations under the License.
  */
 
-#include "DisplayOutput.h"
+#include "UserAgent.h"
 
 #include <stdio.h>
 #include <sys/ioctl.h>
@@ -22,10 +22,8 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <termios.h>
 #include <syslog.h>
 #include <netinet/ether.h>
-#include <curses.h>
 #include <wiringPiI2C.h>
 
 #include <string>
@@ -44,26 +42,11 @@ extern "C" {
 #include "Application.h"
 #include "HeartbeatMonitor.h"
 #include "OutputHelper.h"
-
-#define MAX_LINE_LENGTH 24
-
-#define DEVICE_ADDRESS 0x50
-
-#define LCD_SIZE 64
-
-#define REG_LCD 0x00
-#define REG_LCD_RESET 0x3F
-
-#define LCD_CLEAR_SCREEN 0x0C
-#define LCD_MOVE_CURSOR 0x1B
-
-#define REG_STATUS_LED 0x41
-#define REG_EXT1_LED 0x43
-#define REG_EXT2_LED 0x44
-
-#define REG_BUTTON 0x42
-#define BUTTON_STATUS_SHORT 1
-#define BUTTON_STATUS_LONG 2
+#include "I2cController.h"
+#include "ConsoleDisplay.h"
+#include "LcdDisplay.h"
+#include "DisplayFactory.h"
+#include "I2cController.h"
 
 using namespace std;
 
@@ -71,20 +54,94 @@ namespace {
 int WaitForKeyboardInput(unsigned int seconds);
 const string GetLocationString(const double latitude,
                                const double longitude);
-const char* GetCommandString(Command_t command);
+const char* GetCommandString(Command command);
 }
 
 void*
-DisplayMenu(void* context) {
-    DisplayOutput output(reinterpret_cast<ApplicationContext*>(context));
+UserAgentRunner(void* context) {
+    UserAgent userAgent(reinterpret_cast<ApplicationContext*>(context));
 
-    output.Run();
+    userAgent.Run();
 
     return nullptr;
 }
 
 void
-DisplayOutput::Run() {
+UserAgent::ExecuteCurrentCommand(Command& currentCommand) {
+  switch(currentCommand) {
+  case COMMAND_NEXT:
+    if (menuState == MENU_NETWORKS) {
+      ChooseNextNetwork();
+    }
+    else if (menuState == MENU_NETWORK_DETAILS) {
+      if (networkDetailState == DETAIL_NET_CLIENTS) {
+        if (!ChooseNextClient()) {
+          ChooseNextNetworkDetail();
+        }
+      }
+      else {
+        ChooseNextNetworkDetail();
+      }
+    }
+    else {
+      ChooseNextClientDetail();
+    }
+    break;
+  case COMMAND_ZOOM_IN:
+    if (menuState == MENU_NETWORKS) {
+      menuState = MENU_NETWORK_DETAILS;
+      networkDetailState = DETAIL_NET_MANUFACTURER;
+      currentClient = "";
+    }
+    else if (menuState == MENU_NETWORK_DETAILS) {
+      if (networkDetailState == DETAIL_NET_CLIENTS) {
+        menuState = MENU_CLIENT_DETAILS;
+        clientDetailState = DETAIL_CLIENT_MANUFACTURER;
+      }
+    }
+    currentCommand = COMMAND_NEXT;
+    break;
+  case COMMAND_ZOOM_OUT:
+    if (menuState == MENU_NETWORK_DETAILS) {
+      menuState = MENU_NETWORKS;
+    }
+    else {
+      menuState = MENU_NETWORK_DETAILS;
+    }
+    currentCommand = COMMAND_NEXT;
+    break;
+  case COMMAND_FILTER_PROTECTED:
+    filter = true;
+    ApplyFilter();
+    currentCommand = COMMAND_NO_FILTER;
+    break;
+  case COMMAND_NO_FILTER:
+    filter = false;
+    currentCommand = COMMAND_FILTER_PROTECTED;
+    break;
+  case COMMAND_RESET:
+    if (menuState == MENU_GPS) {
+      this->GetMutableContext()->ResetLocation();
+      currentCommand = COMMAND_WIFI;
+    }
+    else {
+      ResetNetworks();
+      currentCommand = COMMAND_NEXT;
+    }
+    break;
+  case COMMAND_GPS:
+    menuState = MENU_GPS;
+    currentCommand = COMMAND_WIFI;
+    break;
+  case COMMAND_WIFI:
+    menuState = MENU_NETWORKS;
+    currentCommand = COMMAND_NEXT;
+    break;
+  }
+}
+
+void
+UserAgent::Run() {
   char line[MAX_LINE_LENGTH + 2];
   bool lastLedOpenState;
   bool lastLedWepState;
@@ -93,10 +150,8 @@ DisplayOutput::Run() {
     lastZone6;
   ostringstream zone1, zone2, zone3, zone4, zone5, zone6;
 
-  i2c_fd = wiringPiI2CSetup(DEVICE_ADDRESS);
-
   menuState = MENU_NETWORKS;
-  currentCommand = COMMAND_NEXT;
+  Command currentCommand = COMMAND_NEXT;
   filter = false;
   lastLedOpenState = false;
   lastLedWepState = false;
@@ -109,15 +164,15 @@ DisplayOutput::Run() {
 
   networkDiscovery->BeginNetworkIterator(networkIterator);
 
-  i2c_oper = IsI2cOperational();
+  i2cController.Init();
 
-  if (!i2c_oper) {
+  if (!i2cController.IsOperational()) {
     string errStr = "I2C failure: Disabling interactions with IgORE board";
 
     syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
 
     if (this->GetContext()->interactive) {
-      fprintf(stderr, "%s\n", errStr);
+      fprintf(stderr, "%s\n", errStr.c_str());
     }
   }
 
@@ -131,10 +186,7 @@ DisplayOutput::Run() {
   lastZone4.str("");
   lastZone5.str("");
 
-  if (this->GetContext()->interactive) {
-    initscr();
-    cbreak();
-  }
+  InitDisplay(&i2cController);
 
   ClearScreen();
 
@@ -151,7 +203,7 @@ DisplayOutput::Run() {
       lastZone3.str("");
       lastZone4.str("");
       lastZone5.str("");
-      ClearLcdReset();
+      Reset();
       ClearScreen();
     }
 
@@ -346,20 +398,20 @@ DisplayOutput::Run() {
       zone4 << distanceStr.substr(0, MAX_LINE_LENGTH);
     }
 
-    if (zone2.str().compare(lastZone2.str()) != 0) {
-      LcdMoveCursor(0, 17);
+    if (zone2.str() != lastZone2.str()) {
+      MoveCursor(0, 17);
       sprintf(line, "%-5s", zone2.str().c_str());
       PrintLine(line);
     }
 
-    if (zone3.str().compare(lastZone3.str()) != 0) {
-      LcdMoveCursor(0, 22);
+    if (zone3.str() != lastZone3.str()) {
+      MoveCursor(0, 22);
       sprintf(line, "%2s", zone3.str().c_str());
       PrintLine(line);
     }
 
-    if (zone1.str().compare(lastZone1.str()) != 0) {
-      LcdMoveCursor(0, 0);
+    if (zone1.str() != lastZone1.str()) {
+      MoveCursor(0, 0);
       if (zone2.str().empty()) {
         sprintf(line, "%-24s", zone1.str().c_str());
       }
@@ -369,14 +421,14 @@ DisplayOutput::Run() {
       PrintLine(line);
     }
 
-    if (zone5.str().compare(lastZone5.str()) != 0) {
-      LcdMoveCursor(1, 18);
+    if (zone5.str() != lastZone5.str()) {
+      MoveCursor(1, 18);
       sprintf(line, "%-3s", zone5.str().c_str());
       PrintLine(line);
     }
 
-    if (zone4.str().compare(lastZone4.str()) != 0) {
-      LcdMoveCursor(1, 0);
+    if (zone4.str() != lastZone4.str()) {
+      MoveCursor(1, 0);
       if (zone5.str().empty()) {
         sprintf(line, "%-23s", zone4.str().c_str());
       }
@@ -387,19 +439,18 @@ DisplayOutput::Run() {
       PrintLine(line);
     }
 
-    if (zone6.str().compare(lastZone6.str()) != 0) {
-      LcdMoveCursor(1, 23);
+    if (zone6.str() != lastZone6.str()) {
+      MoveCursor(1, 23);
       PrintLine(zone6.str().c_str());
     }
 
-#if 0
-    if (this->GetContext()->interactive &&
-        (zone1.str().compare(lastZone1.str()) != 0 ||
-         zone2.str().compare(lastZone2.str()) != 0 ||
-         zone3.str().compare(lastZone3.str()) != 0 ||
-         zone4.str().compare(lastZone4.str()) != 0 ||
-         zone5.str().compare(lastZone5.str()) != 0 ||
-         zone6.str().compare(lastZone6.str()) != 0)) {
+#if DEBUG
+    if (zone1.str() != lastZone1.str() ||
+        zone2.str() != lastZone2.str() ||
+        zone3.str() != lastZone3.str() ||
+        zone4.str() != lastZone4.str() ||
+        zone5.str() != lastZone5.str() ||
+        zone6.str() != lastZone6.str()) {
       if (zone2.str().empty()) {
         fprintf(stdout, "%-21s %2s\n", zone1.str().c_str(),
                 zone3.str().c_str());
@@ -464,103 +515,42 @@ DisplayOutput::Run() {
 
     if (c == ' ') {
       // Long button pressed: Select next command.
-      ChooseNextCommand();
+      ChooseNextCommand(currentCommand);
 
       continue;
     }
 
     // Short button pressed: Execute current command.
-    switch(currentCommand) {
-    case COMMAND_NEXT:
-      if (menuState == MENU_NETWORKS) {
-        ChooseNextNetwork();
-      }
-      else if (menuState == MENU_NETWORK_DETAILS) {
-        if (networkDetailState == DETAIL_NET_CLIENTS) {
-          if (!ChooseNextClient()) {
-            ChooseNextNetworkDetail();
-          }
-        }
-        else {
-          ChooseNextNetworkDetail();
-        }
-      }
-      else {
-        ChooseNextClientDetail();
-      }
-      break;
-    case COMMAND_ZOOM_IN:
-      if (menuState == MENU_NETWORKS) {
-        menuState = MENU_NETWORK_DETAILS;
-        networkDetailState = DETAIL_NET_MANUFACTURER;
-        currentClient = "";
-      }
-      else if (menuState == MENU_NETWORK_DETAILS) {
-        if (networkDetailState == DETAIL_NET_CLIENTS) {
-          menuState = MENU_CLIENT_DETAILS;
-          clientDetailState = DETAIL_CLIENT_MANUFACTURER;
-        }
-      }
-      currentCommand = COMMAND_NEXT;
-      break;
-    case COMMAND_ZOOM_OUT:
-      if (menuState == MENU_NETWORK_DETAILS) {
-        menuState = MENU_NETWORKS;
-      }
-      else {
-        menuState = MENU_NETWORK_DETAILS;
-      }
-      currentCommand = COMMAND_NEXT;
-      break;
-    case COMMAND_FILTER_PROTECTED:
-      filter = true;
-      ApplyFilter();
-      currentCommand = COMMAND_NO_FILTER;
-      break;
-    case COMMAND_NO_FILTER:
-      filter = false;
-      currentCommand = COMMAND_FILTER_PROTECTED;
-      break;
-    case COMMAND_RESET:
-      if (menuState == MENU_GPS) {
-        this->GetMutableContext()->ResetLocation();
-        currentCommand = COMMAND_WIFI;
-      }
-      else {
-        ResetNetworks();
-        currentCommand = COMMAND_NEXT;
-      }
-      break;
-    case COMMAND_GPS:
-      menuState = MENU_GPS;
-      currentCommand = COMMAND_WIFI;
-      break;
-    case COMMAND_WIFI:
-      menuState = MENU_NETWORKS;
-      currentCommand = COMMAND_NEXT;
-      break;
-    }
+    ExecuteCurrentCommand(currentCommand);
   }
 
   EchoOn();
 }
 
-bool
-DisplayOutput::IsI2cOperational() {
-  int status = wiringPiI2CReadReg8(i2c_fd, REG_BUTTON);
+LcdDisplay*
+UserAgent::GetLcdDisplay() {
+  if (!i2cController.IsOperational()) {
+    return nullptr;
+  }
 
-  return status != -1;
+  DisplayPtr displayPtr = displays.front();
+
+  if (!displayPtr) {
+      return nullptr;
+  }
+
+  return reinterpret_cast<LcdDisplay*>(displayPtr.get());
 }
 
 int
-DisplayOutput::GetButton() {
-  if (!i2c_oper) {
+UserAgent::GetButton() {
+  if (!i2cController.IsOperational()) {
     return 0;
   }
 
-  int regValue = wiringPiI2CReadReg8(i2c_fd, REG_BUTTON);
+  int reg_value = wiringPiI2CReadReg8(i2cController.GetFileDescr(), REG_BUTTON);
 
-  if (regValue == -1) {
+  if (reg_value == -1) {
     string errStr =
       fmt::format("Error reading register 0x{:02X} from I2C slave device "
                   "0x{:02X}", REG_BUTTON, DEVICE_ADDRESS);
@@ -570,7 +560,8 @@ DisplayOutput::GetButton() {
     return 0;
   }
 
-  int status = wiringPiI2CWriteReg8(i2c_fd, REG_BUTTON, 0);
+  int status =
+    wiringPiI2CWriteReg8(i2cController.GetFileDescr(), REG_BUTTON, 0);
 
   if (status == -1) {
     string errStr =
@@ -582,16 +573,16 @@ DisplayOutput::GetButton() {
     return 0;
   }
 
-  return regValue;
+  return reg_value;
 }
 
 void
-DisplayOutput::SetLed(int reg, bool state) {
-  if (!i2c_oper) {
+UserAgent::SetLed(int reg, bool state) {
+  if (!i2cController.IsOperational()) {
     return;
   }
 
-  int status = wiringPiI2CWriteReg8(i2c_fd, reg, state);
+  int status = wiringPiI2CWriteReg8(i2cController.GetFileDescr(), reg, state);
 
   if (status == -1) {
     string errStr = 
@@ -603,167 +594,93 @@ DisplayOutput::SetLed(int reg, bool state) {
 }
 
 void
-DisplayOutput::ClearScreen() {
-  char str[2];
+UserAgent::InitDisplay(const I2cController* i2cController) {
+  if (i2cController->IsOperational()) {
+    LcdDisplay* display =
+      DisplayFactory::MakeLcdDisplay(i2cController->GetFileDescr());
+    DisplayPtr displayPtr = shared_ptr<Display>(display);
 
-  str[0] = LCD_CLEAR_SCREEN;
-  str[1] = '\0';
+    if (this->GetContext()->debugLcdDisplay) {
+      display->Debug();
+    }
 
-  OutputLcd(str, false);
+    displays.push_back(displayPtr);
+  }
 
   if (this->GetContext()->interactive) {
-    clear();
+    DisplayPtr displayPtr =
+      shared_ptr<Display>(DisplayFactory::MakeConsoleDisplay());
+
+    displays.push_back(displayPtr);
+  }
+
+  for (auto& displayPtr : displays) {
+    displayPtr->Init();
   }
 }
 
 void
-DisplayOutput::PrintLine(const char* line) {
-  OutputLcd(line, false);
+UserAgent::ClearScreen() {
+  for (auto& display : displays) {
+    display->ClearScreen();
+  }
+}
 
-  if (this->GetContext()->interactive) {
-    mvaddstr(y, x, line);
-    refresh();
+void
+UserAgent::PrintLine(const char* line) {
+  for (auto& display : displays) {
+    display->Print(line, false);
+  }
+}
+
+void
+UserAgent::Print(const char* line, bool line_feed) {
+  for (auto& display : displays) {
+    display->Print(line, line_feed);
   }
 }
 
 bool
-DisplayOutput::IsLcdReset() {
-  if (!i2c_oper) {
+UserAgent::IsLcdReset() {
+  LcdDisplay* display = GetLcdDisplay();
+
+  if (!display) {
     return false;
   }
 
-  int regValue = wiringPiI2CReadReg8(i2c_fd, REG_LCD_RESET);
-
-  if (regValue == -1) {
-    string errStr =
-      fmt::format("Error reading register 0x{:02X} from I2C slave device "
-                  "0x{:02X}", REG_LCD_RESET, DEVICE_ADDRESS);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
-
-    return false;
-  }
-
-  if (regValue != 0) {
-    if (this->GetContext()->debugLcdDisplay) {
-      string debugStr = "LCD Display: Detected reset";
-
-      syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
-    }
-
-    return true;
-  }
-
-  return false;
+  return display->IsReset();
 }
 
 void
-DisplayOutput::ClearLcdReset() {
-  if (!i2c_oper) {
-    return;
-  }
-
-  int status = wiringPiI2CWriteReg8(i2c_fd, REG_LCD_RESET, 0x00);
-
-  if (status == -1) {
-    string errStr =
-      fmt::format("Error writing register 0x{:02X} on I2C slave device "
-                  "0x{:02X}", REG_LCD_RESET, DEVICE_ADDRESS);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
-
-    return;
-  }
-
-  if (this->GetContext()->debugLcdDisplay) {
-    string debugStr = "LCD Display: Clear";
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
+UserAgent::Reset() {
+  for (auto& display : displays) {
+    display->Reset();
   }
 }
 
 void
-DisplayOutput::LcdMoveCursor(int row, int column) {
-  y = row;
-  x = column;
-
-  if (!i2c_oper) {
-    return;
+UserAgent::MoveCursor(int row, int column) {
+  for (auto& display : displays) {
+    display->MoveCursor(row, column);
   }
-
-  if (this->GetContext()->debugLcdDisplay) {
-    string debugStr =
-      fmt::format("LCD Display: Move cursor to row {}, column {}", row,
-                  column);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.c_str());
-  }
-
-  string cmd =
-    fmt::format("sudo i2cset -y 1 0{:02x} 0x{:02x} 0x{:02x} 0x{:02x} 0x00 i",
-                DEVICE_ADDRESS, REG_LCD + 1, row, column);
-
-  system(cmd.c_str());
-
-  cmd = fmt::format("sudo i2cset -y 1 0x{:02x} 0x{:02x} 0x{:02x} i",
-                    DEVICE_ADDRESS, REG_LCD, LCD_MOVE_CURSOR);
-
-  system(cmd.c_str());
 }
 
 void
-DisplayOutput::OutputLcd(const char* line, bool line_feed) {
-  int len = strlen(line);
-
-  if (len > LCD_SIZE - 1) {
-    len = LCD_SIZE - 1;
+UserAgent::EchoOn() {
+  for (auto& display : displays) {
+    display->EchoOn();
   }
-
-  if (this->GetContext()->interactive) {
-    string str = line;
-
-    mvaddstr(y, x, str.substr(0, len).c_str());
-    refresh();
-
-    if (line_feed) {
-      y += 1;
-      x = 0;
-    }
-  }
-  
-  if (!i2c_oper) {
-    return;
-  }
-
-  if (this->GetContext()->debugLcdDisplay) {
-    string debugStr = fmt::format("LCD Display: Output '{}'", line);
-
-    syslog(LOG_USER | LOG_LOCAL3 | LOG_DEBUG, debugStr.substr(0, 80).c_str());
-  }
-
-  ostringstream cmd;
-  string str;
-  int i;
-
-  cmd << fmt::format("sudo i2cset -y 1 0x{:02x} 0x{:02x} ", DEVICE_ADDRESS,
-                     REG_LCD);
-
-  for (i = 0; i < len; i++) {
-    str = fmt::format("0x{:02x} ", line[i]);
-    cmd << str;
-  }
-
-  if (line_feed) {
-    cmd << "0x0a ";
-  }
-
-  cmd << "0x00 i";
-
-  system(cmd.str().c_str());
 }
 
 void
-DisplayOutput::ChooseNextCommand() {
+UserAgent::EchoOff() {
+  for (auto& display : displays) {
+    display->EchoOff();
+  }
+}
+
+void
+UserAgent::ChooseNextCommand(Command& currentCommand) {
   switch(currentCommand) {
   case COMMAND_NEXT:
     if (menuState == MENU_NETWORKS ||
@@ -822,7 +739,7 @@ DisplayOutput::ChooseNextCommand() {
 }
 
 void
-DisplayOutput::ChooseNextNetwork() {
+UserAgent::ChooseNextNetwork() {
   NetworkIterator& networkIterator =
     this->GetMutableContext()->networkIterator;
   NetworkDiscovery* networkDiscovery =
@@ -843,7 +760,7 @@ DisplayOutput::ChooseNextNetwork() {
  * is open. If it isn't find the next one that is.
  */
 void
-DisplayOutput::ApplyFilter() {
+UserAgent::ApplyFilter() {
   string currentBssid;
   NetworkDiscovery* networkDiscovery =
     this->GetMutableContext()->GetNetworkDiscovery();
@@ -907,7 +824,7 @@ DisplayOutput::ApplyFilter() {
 }
 
 bool
-DisplayOutput::ChooseNextClient() {
+UserAgent::ChooseNextClient() {
   string bssid;
   int i;
   NetworkIterator& networkIterator =
@@ -951,56 +868,12 @@ DisplayOutput::ChooseNextClient() {
 }
 
 void
-DisplayOutput::ChooseNextClientDetail() {
+UserAgent::ChooseNextClientDetail() {
   clientDetailState++;
 }
 
 void
-DisplayOutput::EchoOff() {
-  if (this->GetContext()->interactive) {
-    noecho();
-  }
-
-  // Define a terminal configuration data structure
-  struct termios term;
-
-  // Copy the stdin terminal configuration into term
-  tcgetattr(fileno(stdin), &term);
-
-  // Turn off Canonical processing in term
-  term.c_lflag &= ~ICANON;
-
-  // Turn off screen echo in term
-  term.c_lflag &= ~ECHO;
-
-  // Set the terminal configuration for stdin according to term, now
-  tcsetattr(fileno(stdin), TCSANOW, &term);
-}
-
-void
-DisplayOutput::EchoOn() {
-  if (this->GetContext()->interactive) {
-    endwin();
-  }
-
-  // Define a terminal configuration data structure
-  struct termios term;
-
-  // Copy the stdin terminal configuration into term
-  tcgetattr(fileno(stdin), &term);
-
-  // Turn on Canonical processing in term
-  term.c_lflag |= ICANON;
-
-  // Turn on screen echo in term
-  term.c_lflag |= ECHO;
-
-  // Set the terminal configuration for stdin according to term, now.
-  tcsetattr(fileno(stdin), TCSANOW, &term);
-}
-
-void
-DisplayOutput::ChooseNextNetworkDetail() {
+UserAgent::ChooseNextNetworkDetail() {
   networkDetailState++;
 
   if (networkDetailState == DETAIL_NET_CLIENTS) {
@@ -1009,7 +882,7 @@ DisplayOutput::ChooseNextNetworkDetail() {
 }
 
 void
-DisplayOutput::ResetNetworks() {
+UserAgent::ResetNetworks() {
   NetworkIterator& networkIterator =
     this->GetMutableContext()->networkIterator;
   NetworkDiscovery* networkDiscovery =
@@ -1067,7 +940,7 @@ GetLocationString(const double latitude, const double longitude) {
 }
 
 const char*
-GetCommandString(Command_t command) {
+GetCommandString(Command command) {
   switch(command) {
   case COMMAND_NEXT:
     return "+";

@@ -40,7 +40,7 @@ extern "C" {
 #include "GpsMonitor.h"
 #include "ChannelScanner.h"
 #include "HeartbeatMonitor.h"
-#include "DisplayOutput.h"
+#include "UserAgent.h"
 
 #define DEFAULT_ACTIVITY_THRESHOLD 30
 
@@ -241,10 +241,10 @@ main(int argc, char** argv) {
   ApplicationContext context(&application);
   NetworkDiscovery networkDiscovery(&context);
   pthread_t gpsThreadId;
-  pthread_t interfaceThreadId;
-  pthread_t displayThreadId;
+  pthread_t pcapReaderThreadId;
+  pthread_t userAgentThreadId;
   pthread_t scanChannelsThreadId;
-  pthread_t journalWirelessInfoThreadId;
+  pthread_t databaseThreadId;
   pthread_t heartbeatThreadId;
 
   createPidFile("wscand", "/var/run/wscand.pid", CPF_CLOEXEC);
@@ -260,26 +260,25 @@ main(int argc, char** argv) {
 
   pthread_create(&gpsThreadId, NULL, MonitorGps, &context);
 
-  pthread_create(&interfaceThreadId, NULL, MonitorPcap, &context);
+  pthread_create(&pcapReaderThreadId, NULL, PcapReaderRunner, &context);
 
-  pthread_create(&displayThreadId, NULL, DisplayMenu, &context);
+  pthread_create(&userAgentThreadId, NULL, UserAgentRunner, &context);
 
   pthread_create(&scanChannelsThreadId, NULL, ScanChannels, &context);
 
-  pthread_create(&journalWirelessInfoThreadId, NULL, JournalWirelessInformation,
-                 &context);
+  pthread_create(&databaseThreadId, NULL, DatabaseRunner, &context);
 
   pthread_create(&heartbeatThreadId, NULL, MonitorHeartbeat, &context);
 
   pthread_join(gpsThreadId, NULL);
 
-  pthread_join(interfaceThreadId, NULL);
+  pthread_join(pcapReaderThreadId, NULL);
 
-  pthread_join(displayThreadId, NULL);
+  pthread_join(userAgentThreadId, NULL);
 
   pthread_join(scanChannelsThreadId, NULL);
 
-  pthread_join(journalWirelessInfoThreadId, NULL);
+  pthread_join(databaseThreadId, NULL);
 
   pthread_join(heartbeatThreadId, NULL);
 

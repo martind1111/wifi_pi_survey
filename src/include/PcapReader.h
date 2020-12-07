@@ -7,7 +7,7 @@
 
 class ApplicationContext;
 
-void* MonitorPcap(void* context);
+void* PcapReaderRunner(void* context);
 
 class PcapReader : public Worker {
 public:

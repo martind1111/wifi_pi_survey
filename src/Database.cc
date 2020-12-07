@@ -45,7 +45,7 @@ int Callback(void* data, int argc, char** argv, char** azColName);
 }
 
 void*
-JournalWirelessInformation(void* ctx) {
+DatabaseRunner(void* ctx) {
     Database database(reinterpret_cast<ApplicationContext*>(ctx));
 
     database.Run();

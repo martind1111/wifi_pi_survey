@@ -43,10 +43,8 @@ extern "C" {
 #include "HeartbeatMonitor.h"
 #include "OutputHelper.h"
 #include "I2cController.h"
-#include "ConsoleDisplay.h"
-#include "LcdDisplay.h"
-#include "DisplayFactory.h"
-#include "I2cController.h"
+#include "DisplayManager.h"
+#include "Display.h"
 
 static const size_t ZONE_COUNT = 6;
 
@@ -77,7 +75,7 @@ UserAgentRunner(void* context) {
 
 void
 UserAgent::ExecuteNetworkMenu(NetworkDiscovery* networkDiscovery,
-                              const NetworkInfo_t& networkInfo,
+                              const NetworkInfo& networkInfo,
                               uint32_t networkCountSnapshot,
                               const string& currentNetworkSnapshot,
                               string& currentClientSnapshot,
@@ -177,7 +175,7 @@ UserAgent::ExecuteClientMenu(NetworkDiscovery* networkDiscovery,
                              vector<string>& zones) {
   zones[ZONE_MAIN] = currentClientSnapshot;
 
-  ClientInfo_t client;
+  ClientInfo client;
   bool clientFound = networkDiscovery->GetClient(currentNetworkSnapshot,
                                                  currentClientSnapshot,
                                                  client);
@@ -305,36 +303,36 @@ void UserAgent::RenderDisplay(const vector<string>& zones,
   char line[MAX_LINE_LENGTH + 2];
 
   if (zones[ZONE_SECURITY] != lastZones[ZONE_SECURITY]) {
-    MoveCursor(0, 17);
+    display_manager->MoveCursor(0, 17);
     sprintf(line, "%-5s", zones[ZONE_SECURITY].c_str());
-    PrintLine(line);
+    display_manager->PrintLine(line);
   }
 
   if (zones[ZONE_NET_COUNT] != lastZones[ZONE_NET_COUNT]) {
-    MoveCursor(0, 22);
+    display_manager->MoveCursor(0, 22);
     sprintf(line, "%2s", zones[ZONE_NET_COUNT].c_str());
-    PrintLine(line);
+    display_manager->PrintLine(line);
   }
 
   if (zones[ZONE_MAIN] != lastZones[ZONE_MAIN]) {
-    MoveCursor(0, 0);
+    display_manager->MoveCursor(0, 0);
     if (zones[ZONE_SECURITY].empty()) {
       sprintf(line, "%-24s", zones[ZONE_MAIN].c_str());
     }
     else {
       sprintf(line, "%-17s", zones[ZONE_MAIN].c_str());
     }
-    PrintLine(line);
+    display_manager->PrintLine(line);
   }
 
   if (zones[ZONE_DETAILS_2] != lastZones[ZONE_DETAILS_2]) {
-    MoveCursor(1, 18);
+    display_manager->MoveCursor(1, 18);
     sprintf(line, "%-3s", zones[ZONE_DETAILS_2].c_str());
-    PrintLine(line);
+    display_manager->PrintLine(line);
   }
 
   if (zones[ZONE_DETAILS_1] != lastZones[ZONE_DETAILS_1]) {
-    MoveCursor(1, 0);
+    display_manager->MoveCursor(1, 0);
     if (zones[ZONE_DETAILS_2].empty()) {
       sprintf(line, "%-23s", zones[ZONE_DETAILS_1].c_str());
     }
@@ -342,12 +340,12 @@ void UserAgent::RenderDisplay(const vector<string>& zones,
       sprintf(line, "%-18s", zones[ZONE_DETAILS_1].c_str());
     }
 
-    PrintLine(line);
+    display_manager->PrintLine(line);
   }
 
   if (zones[ZONE_COMMAND] != lastZones[ZONE_COMMAND]) {
-    MoveCursor(1, 23);
-    PrintLine(zones[ZONE_COMMAND].c_str());
+    display_manager->MoveCursor(1, 23);
+    display_manager->PrintLine(zones[ZONE_COMMAND].c_str());
   }
 
 #if DEBUG
@@ -378,6 +376,61 @@ void UserAgent::RenderDisplay(const vector<string>& zones,
 #endif
 }
 
+/**
+ * Handle user inputs.
+ * @param currentCommand Currently selected command to execute
+ * @return true if system can continue operating, false if system has
+ *         initiated shutdown procedure and should stop.
+ */
+bool
+UserAgent::HandleInput(Command& currentCommand) {
+  char c;
+
+  int status = GetButton();
+
+  if (status == BUTTON_STATUS_SHORT) {
+    c = '.';
+  }
+  else if (status == BUTTON_STATUS_LONG) {
+    c = ' ';
+  }
+
+  if (status != BUTTON_STATUS_SHORT && status != BUTTON_STATUS_LONG) {
+    if (this->GetContext()->interactive) {
+      int status = WaitForKeyboardInput(1);
+
+      if (status != 1) {
+        return true;
+      }
+
+      c = getc(stdin);
+    }
+    else {
+      return true;
+    }
+  }
+
+  if (c == 'x') {
+    pcap_breakloop(this->GetContext()->descr);
+
+    this->GetMutableContext()->GetApplication()->Shutdown();
+
+    return false;
+  }
+
+  if (c == ' ') {
+    // Long button pressed: Select next command.
+    ChooseNextCommand(currentCommand);
+
+    return true;
+  }
+
+  // Short button pressed: Execute current command.
+  ExecuteCurrentCommand(currentCommand);
+
+  return true;
+}
+
 void
 UserAgent::Run() {
   bool lastLedOpenState;
@@ -400,9 +453,11 @@ UserAgent::Run() {
 
   networkDiscovery->BeginNetworkIterator(networkIterator);
 
-  i2cController.Init();
+  i2c_controller = make_unique<I2cController>();
 
-  if (!i2cController.IsOperational()) {
+  i2c_controller->Init();
+
+  if (!i2c_controller->IsOperational()) {
     string errStr = "I2C failure: Disabling interactions with IgORE board";
 
     syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
@@ -420,9 +475,12 @@ UserAgent::Run() {
     lastZone = "";
   }
 
-  InitDisplay(&i2cController);
+  display_manager = make_unique<DisplayManager>(this->GetContext(),
+                                                i2c_controller.get());
 
-  ClearScreen();
+  display_manager->Init();
+
+  display_manager->ClearScreen();
 
   for ( ; ; ) {
     if (this->GetContext()->GetApplication()->IsShuttingDown()) {
@@ -431,12 +489,12 @@ UserAgent::Run() {
 
     this->GetMutableContext()->ReportActivity(ACTIVITY_DISPLAY_MENU);
 
-    if (IsLcdReset()) {
+    if (display_manager->IsLcdReset()) {
       for (auto& lastZone : lastZones) {
         lastZone = "";
       }
-      Reset();
-      ClearScreen();
+      display_manager->Reset();
+      display_manager->ClearScreen();
     }
 
     string currentNetworkSnapshot;
@@ -479,7 +537,7 @@ UserAgent::Run() {
 
     zones[ZONE_COMMAND] = GetCommandString(currentCommand);
 
-    NetworkInfo_t networkInfo;
+    NetworkInfo networkInfo;
     bool networkFound = networkDiscovery->GetNetwork(currentNetworkSnapshot,
                                                      networkInfo);
 
@@ -508,78 +566,24 @@ UserAgent::Run() {
       lastZones[i] = zones[i];
     }
 
-    EchoOff();
+    display_manager->EchoOff();
 
-    char c;
-
-    int status = GetButton();
-
-    if (status == BUTTON_STATUS_SHORT) {
-      c = '.';
+    if (!HandleInput(currentCommand)) {
+        break;
     }
-    else if (status == BUTTON_STATUS_LONG) {
-      c = ' ';
-    }
-
-    if (status != BUTTON_STATUS_SHORT && status != BUTTON_STATUS_LONG) {
-      if (this->GetContext()->interactive) {
-        int status = WaitForKeyboardInput(1);
-
-        if (status != 1) {
-          continue;
-        }
-
-        c = getc(stdin);
-      }
-      else {
-        continue;
-      }
-    }
-
-    if (c == 'x') {
-      pcap_breakloop(this->GetContext()->descr);
-
-      this->GetMutableContext()->GetApplication()->Shutdown();
-
-      continue;
-    }
-
-    if (c == ' ') {
-      // Long button pressed: Select next command.
-      ChooseNextCommand(currentCommand);
-
-      continue;
-    }
-
-    // Short button pressed: Execute current command.
-    ExecuteCurrentCommand(currentCommand);
   }
 
-  EchoOn();
-}
-
-LcdDisplay*
-UserAgent::GetLcdDisplay() {
-  if (!i2cController.IsOperational()) {
-    return nullptr;
-  }
-
-  DisplayPtr displayPtr = displays.front();
-
-  if (!displayPtr) {
-      return nullptr;
-  }
-
-  return reinterpret_cast<LcdDisplay*>(displayPtr.get());
+  display_manager->EchoOn();
 }
 
 int
 UserAgent::GetButton() {
-  if (!i2cController.IsOperational()) {
+  if (!i2c_controller->IsOperational()) {
     return 0;
   }
 
-  int reg_value = wiringPiI2CReadReg8(i2cController.GetFileDescr(), REG_BUTTON);
+  int reg_value = wiringPiI2CReadReg8(i2c_controller->GetFileDescr(),
+                                      REG_BUTTON);
 
   if (reg_value == -1) {
     string errStr =
@@ -592,7 +596,7 @@ UserAgent::GetButton() {
   }
 
   int status =
-    wiringPiI2CWriteReg8(i2cController.GetFileDescr(), REG_BUTTON, 0);
+    wiringPiI2CWriteReg8(i2c_controller->GetFileDescr(), REG_BUTTON, 0);
 
   if (status == -1) {
     string errStr =
@@ -609,11 +613,11 @@ UserAgent::GetButton() {
 
 void
 UserAgent::SetLed(int reg, bool state) {
-  if (!i2cController.IsOperational()) {
+  if (!i2c_controller->IsOperational()) {
     return;
   }
 
-  int status = wiringPiI2CWriteReg8(i2cController.GetFileDescr(), reg, state);
+  int status = wiringPiI2CWriteReg8(i2c_controller->GetFileDescr(), reg, state);
 
   if (status == -1) {
     string errStr = 
@@ -621,92 +625,6 @@ UserAgent::SetLed(int reg, bool state) {
                   "0x{:02X}", REG_STATUS_LED, DEVICE_ADDRESS);
 
     syslog(LOG_USER | LOG_LOCAL3 | LOG_ERR, errStr.c_str());
-  }
-}
-
-void
-UserAgent::InitDisplay(const I2cController* i2cController) {
-  if (i2cController->IsOperational()) {
-    LcdDisplay* display =
-      DisplayFactory::MakeLcdDisplay(i2cController->GetFileDescr());
-    DisplayPtr displayPtr = shared_ptr<Display>(display);
-
-    if (this->GetContext()->debugLcdDisplay) {
-      display->Debug();
-    }
-
-    displays.push_back(displayPtr);
-  }
-
-  if (this->GetContext()->interactive) {
-    DisplayPtr displayPtr =
-      shared_ptr<Display>(DisplayFactory::MakeConsoleDisplay());
-
-    displays.push_back(displayPtr);
-  }
-
-  for (auto& displayPtr : displays) {
-    displayPtr->Init();
-  }
-}
-
-void
-UserAgent::ClearScreen() {
-  for (auto& display : displays) {
-    display->ClearScreen();
-  }
-}
-
-void
-UserAgent::PrintLine(const char* line) {
-  for (auto& display : displays) {
-    display->Print(line, false);
-  }
-}
-
-void
-UserAgent::Print(const char* line, bool line_feed) {
-  for (auto& display : displays) {
-    display->Print(line, line_feed);
-  }
-}
-
-bool
-UserAgent::IsLcdReset() {
-  LcdDisplay* display = GetLcdDisplay();
-
-  if (!display) {
-    return false;
-  }
-
-  return display->IsReset();
-}
-
-void
-UserAgent::Reset() {
-  for (auto& display : displays) {
-    display->Reset();
-  }
-}
-
-void
-UserAgent::MoveCursor(int row, int column) {
-  for (auto& display : displays) {
-    display->MoveCursor(row, column);
-  }
-}
-
-void
-UserAgent::EchoOn() {
-  for (auto& display : displays) {
-    display->EchoOn();
-  }
-}
-
-void
-UserAgent::EchoOff() {
-  for (auto& display : displays) {
-    display->EchoOff();
   }
 }
 
@@ -809,7 +727,7 @@ UserAgent::ApplyFilter() {
       string bssid;
 
       if (networkDiscovery->GetNetworkIteratorBssid(networkIterator, bssid)) {
-        NetworkInfo_t networkInfo;
+        NetworkInfo networkInfo;
 
         if (networkDiscovery->GetNetwork(bssid, networkInfo)) {
           if (networkInfo.security & STD_OPN) {
@@ -843,7 +761,7 @@ UserAgent::ApplyFilter() {
       break;
     }
     else {
-      NetworkInfo_t networkInfo;
+      NetworkInfo networkInfo;
 
       if (networkDiscovery->GetNetwork(bssid, networkInfo)) {
         if (networkInfo.security & STD_OPN) {

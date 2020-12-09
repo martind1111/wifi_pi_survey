@@ -23,6 +23,7 @@
 #include <map>
 #include <bits/stl_pair.h>
 #include <sstream>
+#include <fmt/core.h>
 
 #include "airodump-ng.h"
 #include "HardwareHelper.h"
@@ -117,8 +118,8 @@ NetworkDiscovery::UpdateNetworkResources(const WifiMetadata* wifiMetadata) {
 void
 NetworkDiscovery::ReportNetwork(const ether_addr* bssid,
                                 const WifiMetadata* wifiMetadata) {
-  map<string, NetworkInfo_t*>::iterator iter;
-  NetworkInfo_t* networkInfo;
+  map<string, NetworkInfo*>::iterator iter;
+  NetworkInfo* networkInfo;
 
   if (IsBroadcast(bssid)) {
     return;
@@ -135,13 +136,17 @@ NetworkDiscovery::ReportNetwork(const ether_addr* bssid,
   pthread_mutex_unlock(&networkMutex);
 
   if (!found) {
-    networkInfo = new NetworkInfo_t();
+    networkInfo = new NetworkInfo();
 
     if (wifiMetadata->ssid[0] != '\0') {
       networkInfo->ssid = wifiMetadata->ssid;
     }
 
-    networkInfo->security = wifiMetadata->security;
+    if (wifiMetadata->security != 0) {
+        networkInfo->security = wifiMetadata->security;
+        fprintf(this->context->out, "Set network security for BSSID %s: %d",
+                networkInfo->ssid.c_str(), networkInfo->security);
+    }
 
     networkInfo->channel = this->context->GetCurrentChannel();
 
@@ -153,9 +158,7 @@ NetworkDiscovery::ReportNetwork(const ether_addr* bssid,
 
     networkInfo->packetCount = 1;
 
-    if (wifiMetadata->channel != 0) {
-      networkInfo->radiotapChannel = freq2channel(wifiMetadata->channel);
-    }
+    networkInfo->radiotapChannel = freq2channel(wifiMetadata->channel);
 
     SetCurrentLocation(&networkInfo->location, this->context);
 
@@ -211,11 +214,9 @@ NetworkDiscovery::ReportNetwork(const ether_addr* bssid,
   pthread_mutex_unlock(&networkMutex);
 
   if (!ssid.empty()) {
-    ostringstream ostr;
+    string str = fmt::format("Detected SSID {} for BSSID {}", ssid, eaddr);
 
-    ostr << "Detected SSID " << ssid << " for BSSID " << eaddr;
-
-    syslog(this->context->priority, ostr.str().c_str());
+    syslog(this->context->priority, str.c_str());
   }
 }
 
@@ -226,7 +227,7 @@ NetworkDiscovery::ReportClient(const ether_addr* bssid,
   map<string, NetworkInfo*>::iterator iter;
   string bssidStr = string(ether_ntoa(bssid));
   string clientAddr = string(ether_ntoa(client));
-  map<string, ClientInfo_t*>::iterator clientIter;
+  map<string, ClientInfo*>::iterator clientIter;
   bool newClient = false;
   string ssid;
 
@@ -241,12 +242,12 @@ NetworkDiscovery::ReportClient(const ether_addr* bssid,
     return;
   }
 
-  NetworkInfo_t* network = iter->second;
+  NetworkInfo* network = iter->second;
 
   clientIter = network->clients.find(clientAddr);
 
   if (clientIter == network->clients.end()) {
-    ClientInfo* clientInfo = new ClientInfo_t();
+    ClientInfo* clientInfo = new ClientInfo();
 
     clientInfo->firstSeen = wifiMetadata->timestamp.tv_sec;
     clientInfo->lastSeen = wifiMetadata->timestamp.tv_sec;
@@ -332,12 +333,12 @@ NetworkDiscovery::ReportUnassignedClient(const ether_addr* client,
     return;
   }
 
-  map<string, ClientInfo_t *>::iterator clientIter;
+  map<string, ClientInfo*>::iterator clientIter;
 
   clientIter = unassignedClients.find(clientAddr);
 
   if (clientIter == unassignedClients.end()) {
-    ClientInfo_t *clientInfo = new ClientInfo_t();
+    ClientInfo* clientInfo = new ClientInfo();
 
     clientInfo->lastSeen = wifiMetadata->timestamp.tv_sec;
     clientInfo->packetCount = 1;
@@ -391,8 +392,8 @@ NetworkDiscovery::IsClientAddress(const ether_addr* addr) {
 
 bool
 NetworkDiscovery::GetClient(const string& bssid, const string& clientAddr,
-          ClientInfo_t& clientInfo) {
-  map<string, NetworkInfo_t *>::iterator iter;
+          ClientInfo& clientInfo) {
+  map<string, NetworkInfo*>::iterator iter;
   bool found = false;
 
   pthread_mutex_lock(&networkMutex);
@@ -400,8 +401,8 @@ NetworkDiscovery::GetClient(const string& bssid, const string& clientAddr,
   iter = networks.find(bssid);
 
   if (iter != networks.end()) {
-    map<string, ClientInfo_t *>::iterator clientIter;
-    NetworkInfo_t *networkInfo;
+    map<string, ClientInfo*>::iterator clientIter;
+    NetworkInfo* networkInfo;
 
     networkInfo = iter->second;
 
@@ -442,13 +443,13 @@ NetworkDiscovery::GetClient(const string& bssid, const string& clientAddr,
 
 bool
 NetworkDiscovery::IsSecureNetwork(int securityMask) {
-  map<string, NetworkInfo_t*>::iterator iter;
+  map<string, NetworkInfo*>::iterator iter;
   bool secureNetwork = false;
 
   pthread_mutex_lock(&networkMutex);
 
   for (iter = networks.begin(); iter != networks.end(); iter++) {
-    NetworkInfo_t* networkInfo = iter->second;
+    NetworkInfo* networkInfo = iter->second;
 
     if (networkInfo->security & securityMask) {
       if (GetElapsed(networkInfo->lastSeen) <=
@@ -485,7 +486,7 @@ void
 NetworkDiscovery::BeginNetworkIterator(NetworkIterator& networkIterator) {
   pthread_mutex_lock(&networkMutex);
 
-  map<string, NetworkInfo_t *>::const_iterator iter;
+  map<string, NetworkInfo*>::const_iterator iter;
 
   iter = networks.begin();
 
@@ -526,7 +527,7 @@ NetworkDiscovery::GetNetworkIteratorBssid(NetworkIterator& networkIterator,
 
 void
 NetworkDiscovery::NextNetwork(NetworkIterator& networkIterator) {
-  map<string, NetworkInfo_t *>::const_iterator iter;
+  map<string, NetworkInfo*>::const_iterator iter;
 
   pthread_mutex_lock(&networkMutex);
 
@@ -550,8 +551,8 @@ NetworkDiscovery::NextNetwork(NetworkIterator& networkIterator) {
 
 void
 NetworkDiscovery::DisplayNetworks() {
-  map<string, NetworkInfo_t*>::const_iterator iter;
-  map<string, ClientInfo_t*>::const_iterator clientIter;
+  map<string, NetworkInfo*>::const_iterator iter;
+  map<string, ClientInfo*>::const_iterator clientIter;
 
   fprintf(this->context->out, "Networks:\n");
 
@@ -639,24 +640,17 @@ NetworkDiscovery::DisplayNetworks() {
 }
 
 bool
-NetworkDiscovery::GetNetwork(const string& bssid, NetworkInfo_t& networkInfo) {
+NetworkDiscovery::GetNetwork(const string& bssid, NetworkInfo& networkInfo) {
   bool found = false;
 
   pthread_mutex_lock(&networkMutex);
 
-  map<string, NetworkInfo *>::const_iterator iter;
+  map<string, NetworkInfo*>::const_iterator iter;
 
   iter = networks.find(bssid);
 
   if (iter != networks.end()) {
-    networkInfo.ssid = iter->second->ssid;
-    networkInfo.security = iter->second->security;
-    networkInfo.channel = iter->second->channel;
-    networkInfo.radiotapChannel = iter->second->radiotapChannel;
-    networkInfo.firstSeen = iter->second->firstSeen;
-    networkInfo.lastSeen = iter->second->lastSeen;
-    networkInfo.packetCount = iter->second->packetCount;
-    networkInfo.location = iter->second->location;
+    networkInfo = *iter->second;
     found = true;
   }
   else {
@@ -693,19 +687,19 @@ NetworkDiscovery::GetNetworkCount() {
 
 void
 NetworkDiscovery::ReleaseNetworkResources() {
-  map<string, NetworkInfo_t *>::iterator iter;
-  map<string, NetworkInfo_t *>::iterator del;
-  map<string, ClientInfo_t *>::iterator clientIter;
-  map<string, ClientInfo_t *>::iterator delClient;
+  map<string, NetworkInfo*>::iterator iter;
+  map<string, NetworkInfo*>::iterator del;
+  map<string, ClientInfo*>::iterator clientIter;
+  map<string, ClientInfo*>::iterator delClient;
 
   pthread_mutex_lock(&networkMutex);
 
   for (iter = networks.begin(); iter != networks.end(); ) {
-    NetworkInfo_t *network = iter->second;
+    NetworkInfo* network = iter->second;
 
     for (clientIter = network->clients.begin();
          clientIter != network->clients.end(); ) {
-      ClientInfo_t *client = clientIter->second;
+      ClientInfo* client = clientIter->second;
 
       delete client;
 
@@ -727,7 +721,7 @@ NetworkDiscovery::ReleaseNetworkResources() {
 
   for (clientIter = unassignedClients.begin();
        clientIter != unassignedClients.end(); ) {
-    ClientInfo_t *client = clientIter->second;
+    ClientInfo* client = clientIter->second;
 
     delete client;
 
@@ -741,9 +735,9 @@ NetworkDiscovery::ReleaseNetworkResources() {
   pthread_mutex_unlock(&networkMutex);
 }
 
-const char *
+const char*
 NetworkDiscovery::GetBestClientSignal(const string& bssid) {
-  map<string, NetworkInfo_t *>::iterator iter;
+  map<string, NetworkInfo*>::iterator iter;
 
   pthread_mutex_lock(&networkMutex);
 
@@ -752,7 +746,7 @@ NetworkDiscovery::GetBestClientSignal(const string& bssid) {
   int bestSignal = -128;
 
   if (iter != networks.end()) {
-    map<string, ClientInfo_t *>::iterator clientIter;
+    map<string, ClientInfo*>::iterator clientIter;
 
     for (clientIter = iter->second->clients.begin();
          clientIter != iter->second->clients.end(); clientIter++) {
@@ -786,14 +780,14 @@ NetworkDiscovery::GetBestClientSignal(const string& bssid) {
 
 void
 NetworkDiscovery::GetClients(const string& bssid, vector<string>& clients) {
-  map<string, NetworkInfo_t*>::const_iterator iter;
+  map<string, NetworkInfo*>::const_iterator iter;
 
   pthread_mutex_lock(&networkMutex);
 
   iter = networks.find(bssid);
 
   if (iter != networks.end()) {
-    map<string, ClientInfo_t*>::const_iterator clientIter;
+    map<string, ClientInfo*>::const_iterator clientIter;
 
     clients.clear();
 
@@ -808,7 +802,7 @@ NetworkDiscovery::GetClients(const string& bssid, vector<string>& clients) {
 
 uint32_t
 NetworkDiscovery::GetSecurity(const ether_addr* bssid) {
-  NetworkInfo_t networkInfo;
+  NetworkInfo networkInfo;
   string bssidStr = string(ether_ntoa(bssid));
 
   if (this->GetNetwork(bssidStr, networkInfo)) {

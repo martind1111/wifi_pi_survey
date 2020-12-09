@@ -15,7 +15,9 @@ struct WifiMetadata;
 class ApplicationContext;
 struct ether_addr;
 
-typedef struct ClientInfo {
+struct ClientInfo {
+  ClientInfo() : rate(0), dbmSignal(0), dbmNoise(0), dbSignal(0), dbNoise(0),
+    firstSeen(0), lastSeen(0), packetCount(0) {}
   uint16_t rate;
   int8_t dbmSignal;
   int8_t dbmNoise;
@@ -25,19 +27,21 @@ typedef struct ClientInfo {
   time_t lastSeen;
   uint32_t packetCount;
   Location location;
-} ClientInfo_t;
+};
 
-typedef struct NetworkInfo {
+struct NetworkInfo {
+  NetworkInfo() : security(0), channel(0), radiotapChannel(0), firstSeen(0),
+    lastSeen(0), packetCount(0) {}
   std::string ssid;
   uint32_t security;
-  std::map<std::string, ClientInfo_t*> clients;
+  std::map<std::string, ClientInfo*> clients;
   uint32_t channel;
   uint32_t radiotapChannel;
   time_t firstSeen;
   time_t lastSeen;
   uint32_t packetCount;
   Location location;
-} NetworkInfo_t;
+};
 
 struct NetworkIterator {
   std::string cursor;
@@ -67,10 +71,10 @@ public:
     bool IsWepNetwork();
     bool IsWpaNetwork();
 
-    bool GetNetwork(const std::string& bssid, NetworkInfo_t& networkInfo);
+    bool GetNetwork(const std::string& bssid, NetworkInfo& networkInfo);
     const ether_addr *GetBssid(const WifiMetadata* wifiMetadata);
     bool GetClient(const std::string& bssid, const std::string& clientAddr,
-                   ClientInfo_t& clientInfo );
+                   ClientInfo& clientInfo);
     void GetClients(const std::string& bssid,
                     std::vector<std::string>& clients);
     uint32_t GetSecurity(const ether_addr* bssid);
@@ -94,11 +98,11 @@ private:
 
     NetworkIterator networkIterator;
 
-    std::map<std::string, NetworkInfo_t*> networks;
+    std::map<std::string, NetworkInfo*> networks;
 
     std::map<std::string, std::string> assignedClients;
 
-    std::map<std::string, ClientInfo_t*> unassignedClients;
+    std::map<std::string, ClientInfo*> unassignedClients;
 
     pthread_mutex_t networkMutex;
 };

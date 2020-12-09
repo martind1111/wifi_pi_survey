@@ -190,13 +190,7 @@ pcap_callback(uint8_t* user, const struct pcap_pkthdr* pkthdr,
     PacketLogger::log80211(&packet, user, &wifiMetadata);
 
     NetworkDiscovery* networkDiscovery = context->GetNetworkDiscovery();
-    if (wifiMetadata.bssidPresent) {
-      wifiMetadata.security =
-        networkDiscovery->GetSecurity(&wifiMetadata.bssid);
-    }
-    else {
-      wifiMetadata.security = 0;
-    }
+
     networkDiscovery->UpdateNetworkResources(&wifiMetadata);
 
     if (networkDiscovery->IsEndNetworkIterator(context->networkIterator) &&

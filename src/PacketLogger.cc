@@ -40,6 +40,7 @@ extern "C" {
 #include "WifiMetadata.h"
 #include "Packet.h"
 #include "PacketDecoder.h"
+#include "OutputHelper.h"
 
 static char payload[MAX_PACKET_SIZE];
 
@@ -136,6 +137,11 @@ PacketLogger::log80211(const Packet* packet, void* user,
 
   if (wifiMetadata->ssid[0] != '\0') {
     fprintf(context->out, "SSID %s ", wifiMetadata->ssid);
+  }
+
+  if (wifiMetadata->security != 0) {
+    fprintf(context->out, "Encryption %s ",
+            OutputHelper::GetSecurityString(wifiMetadata->security));
   }
 
   fprintf(context->out, "\n");

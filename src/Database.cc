@@ -94,7 +94,7 @@ Database::Run() {
     for (networkDiscovery->BeginNetworkIterator(networkIterator);
          !networkDiscovery->IsEndNetworkIterator(networkIterator);
          networkDiscovery->NextNetwork(networkIterator)) {
-      NetworkInfo_t networkInfo;
+      NetworkInfo networkInfo;
       string bssid;
 
       networkDiscovery->GetNetworkIteratorBssid(networkIterator, bssid);
@@ -169,7 +169,7 @@ Database::Run() {
       for (clientIter = clients.begin(); clientIter != clients.end();
           clientIter++) {
         /* Create INSERT SQL statement */
-        ClientInfo_t clientInfo;
+        ClientInfo clientInfo;
 
         if (!networkDiscovery->GetClient(bssid, *clientIter, clientInfo)) {
           continue;

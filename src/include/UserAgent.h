@@ -2,20 +2,20 @@
 #define _USER_AGENT_H
 
 #include <string>
-#include <list>
 #include <vector>
 #include <memory>
 
 #include "Worker.h"
-#include "I2cController.h"
 #include "NetworkDiscovery.h"
+#include "I2cController.h"
+#include "DisplayManager.h"
 
-typedef enum {
+enum MenuState {
   MENU_NETWORKS,
   MENU_NETWORK_DETAILS,
   MENU_CLIENT_DETAILS,
   MENU_GPS
-} MenuState_t;
+};
 
 enum Command {
   COMMAND_NEXT,
@@ -30,7 +30,7 @@ enum Command {
   COMMAND_WIFI
 };
 
-typedef enum {
+enum NetworkDetailState {
   DETAIL_NET_MANUFACTURER,
   DETAIL_NET_FIRST_SEEN,
   DETAIL_NET_LAST_SEEN,
@@ -39,43 +39,39 @@ typedef enum {
   DETAIL_NET_LOCATION,
   DETAIL_NET_CLIENTS,
   DETAIL_NET_LAST
-} NetworkDetailState_t;
+};
 
-inline NetworkDetailState_t
-operator++(NetworkDetailState_t& ns, int) {
-  const NetworkDetailState_t prev = ns;
+inline NetworkDetailState
+operator++(NetworkDetailState& ns, int) {
+  const NetworkDetailState prev = ns;
   const int last = static_cast<int>(DETAIL_NET_LAST);
   const int i = static_cast<int>(ns);
-  ns = static_cast<NetworkDetailState_t>((i + 1) % last);
+  ns = static_cast<NetworkDetailState>((i + 1) % last);
   return prev;
 }
 
-typedef enum {
+enum ClientDetailState {
   DETAIL_CLIENT_MANUFACTURER,
   DETAIL_CLIENT_FIRST_SEEN,
   DETAIL_CLIENT_LAST_SEEN,
   DETAIL_CLIENT_PACKET_COUNT,
   DETAIL_CLIENT_SIGNAL_NOISE,
   DETAIL_CLIENT_LAST
-} ClientDetailState_t;
+};
 
-inline ClientDetailState_t
-operator++(ClientDetailState_t& cs, int) {
-  const ClientDetailState_t prev = cs;
+inline ClientDetailState
+operator++(ClientDetailState& cs, int) {
+  const ClientDetailState prev = cs;
   const int last = static_cast<int>(DETAIL_CLIENT_LAST);
   const int i = static_cast<int>(cs);
-  cs = static_cast<ClientDetailState_t>((i + 1) % last);
+  cs = static_cast<ClientDetailState>((i + 1) % last);
   return prev;
 }
 
 void* UserAgentRunner(void* context);
 
 class ApplicationContext;
-class Display;
-class LcdDisplay;
 class NetworkDiscovery;
-
-using DisplayPtr = std::shared_ptr<Display>;
 
 class UserAgent : Worker {
 public:
@@ -86,19 +82,9 @@ public:
 private:
     int GetButton();
     void SetLed(int reg, bool state);
-    void InitDisplay(const I2cController* i2cController);
-    void ClearScreen();
-    void PrintLine(const char* line);
-    void Print(const char* line, bool line_feed);
-    bool IsLcdReset();
-    void Reset();
-    void MoveCursor(int row, int column);
-    void EchoOn();
-    void EchoOff();
-    LcdDisplay* GetLcdDisplay();
 
     void ExecuteNetworkMenu(NetworkDiscovery* networkDiscovery,
-                            const NetworkInfo_t& networkInfo,
+                            const NetworkInfo& networkInfo,
                             uint32_t networkCountSnapshot,
                             const std::string& currentNetworkSnapshot,
                             std::string& currentClientSnapshot,
@@ -111,6 +97,7 @@ private:
     void ExecuteCurrentCommand(Command& currentCommand);
     void RenderDisplay(const std::vector<std::string>& zones,
                        const std::vector<std::string>& lastZones);
+    bool HandleInput(Command& currentCommand);
     void ChooseNextCommand(Command& currentCommand);
     void ChooseNextNetwork();
     bool ChooseNextClient();
@@ -119,19 +106,19 @@ private:
     void ResetNetworks();
     void ApplyFilter();
 
-    MenuState_t menuState;
+    MenuState menuState;
 
     std::string currentClient;
 
-    NetworkDetailState_t networkDetailState;
+    NetworkDetailState networkDetailState;
 
-    ClientDetailState_t clientDetailState;
+    ClientDetailState clientDetailState;
 
     bool filter;
 
-    I2cController i2cController;
+    std::unique_ptr<I2cController> i2c_controller;
 
-    std::list<DisplayPtr> displays;
+    std::unique_ptr<DisplayManager> display_manager;
 };
 
 #endif // _USER_AGENT_H

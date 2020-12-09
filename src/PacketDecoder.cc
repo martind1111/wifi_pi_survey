@@ -459,8 +459,9 @@ DecodeAssocReq(const uint8_t* packet_data, size_t packetLen,
   // Decode information elements.
   size_t ssid_len;
   while (body < (packet_data + packetLen)) {
-    // TODO: Not sure if the following code is safe. Might be some bit
-    // alignment and network ordering byte issue.
+    // TODO: Verufy if the following code is safe. There may be some bit
+    // alignment and network ordering byte issues. Would be best to
+    // memcpy instead of cast and use htns/htonl functions here.
     ie = reinterpret_cast<const struct mgmt_ie_hdr*>(body);
     body += 2;
     if ((body + ie->len) > (packet_data + packetLen)) {
@@ -624,6 +625,7 @@ DecodeBeacon(const uint8_t* packet_data, size_t packetLen,
         else if (ie->id == 0x30) {
           wifiMetadata->security |= STD_WPA2;
 
+          // TODO: Verify network byte ordering.
           numuni = p[8] + (p[9] << 8);
           numauth = p[10 + 4 * numuni] + (p[11 + 4 * numuni] << 8);
 

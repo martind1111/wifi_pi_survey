@@ -13,9 +13,11 @@
 
 using namespace std;
 
-// Test the decoding of Beacon frame.
-TEST(PacketDecoderTest, DecodeBeacon) {
-    string input_pcap = TestHelper::ResolvePath("tests/data/beacon.pcap");
+// Test the decoding of Beacon frame with encryption defined in IE 48 as
+// WPA-2, CCMP cipher and PSK authentication key management.
+TEST(PacketDecoderTest, DecodeBeaconWpa2CcmpPsk) {
+    string input_pcap =
+        TestHelper::ResolvePath("tests/data/beacon_wpa2_ccmp_psk.pcap");
     PacketDecoder decoder;
     WifiMetadata wifiMetadata;
     PcapFileHandler pcap_handler(input_pcap);
@@ -59,6 +61,62 @@ TEST(PacketDecoderTest, DecodeBeacon) {
     EXPECT_STREQ(wifiMetadata.ssid, "Createurs"); 
 
     EXPECT_EQ(wifiMetadata.security, STD_WPA2 | ENC_CCMP | AUTH_PSK); 
+
+    packet = pcap_handler.GetNextPacket(); 
+
+    EXPECT_FALSE(packet);
+
+    pcap_handler.Close();
+}
+
+// Test the decoding of Beacon frame with encryption defined in IE 221 as
+// WPA-2, CCMP cipher and PSK authentication key management.
+TEST(PacketDecoderTest, DecodeBeaconVendorWpa2CcmpPsk) {
+    string input_pcap =
+        TestHelper::ResolvePath("tests/data/beacon_vendor_wpa_ccmp_psk.pcap");
+    PacketDecoder decoder;
+    WifiMetadata wifiMetadata;
+    PcapFileHandler pcap_handler(input_pcap);
+
+    pcap_handler.Open();
+
+    optional<Packet> packet = pcap_handler.GetNextPacket(); 
+
+    EXPECT_TRUE(packet);
+
+    decoder.Decode(&packet.value(), &wifiMetadata);
+
+    // Check radiotap header and radio information.
+    EXPECT_EQ(static_cast<uint16_t>(wifiMetadata.channel), 0x9e09);
+    EXPECT_EQ(wifiMetadata.rate, 10);
+    EXPECT_EQ(wifiMetadata.antenna, 1);
+    EXPECT_EQ(wifiMetadata.txPower, 0);
+    EXPECT_EQ(wifiMetadata.dbNoise, 0);
+    EXPECT_EQ(wifiMetadata.dbSignal, 0);
+    EXPECT_EQ(wifiMetadata.dbSnr, 0);
+    EXPECT_EQ(wifiMetadata.dbmNoise, 0);
+    EXPECT_EQ(static_cast<uint8_t>(wifiMetadata.dbmSignal), 0xa3);
+    EXPECT_EQ(wifiMetadata.dbmSnr, 0);
+
+    EXPECT_TRUE(wifiMetadata.bssidPresent);
+    EXPECT_STREQ(ether_ntoa(&wifiMetadata.bssid), "0:1c:10:11:f2:c0");
+
+    EXPECT_FALSE(wifiMetadata.raPresent);
+
+    EXPECT_TRUE(wifiMetadata.destAddrPresent);
+    EXPECT_STREQ(ether_ntoa(&wifiMetadata.destAddr), "ff:ff:ff:ff:ff:ff");
+
+    EXPECT_FALSE(wifiMetadata.taPresent);
+
+    EXPECT_TRUE(wifiMetadata.srcAddrPresent);
+    EXPECT_STREQ(ether_ntoa(&wifiMetadata.srcAddr), "0:1c:10:11:f2:c0");
+
+    EXPECT_EQ(wifiMetadata.fromDs, 0);
+    EXPECT_EQ(wifiMetadata.toDs, 0);
+
+    EXPECT_STREQ(wifiMetadata.ssid, "Home");
+
+    EXPECT_EQ(wifiMetadata.security, STD_WPA | ENC_CCMP | AUTH_PSK); 
 
     packet = pcap_handler.GetNextPacket(); 
 
